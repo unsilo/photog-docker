@@ -1,0 +1,19 @@
+# Never commit a real environment file — it holds SECRET_KEY_BASE, the Postgres
+# password and the admin credentials. .env.example is the committed template.
+.env
+.env.*
+!.env.example
+
+# Created by install.sh in a working directory. If someone runs the installer
+# inside a clone of this repo, these appear here.
+/import/
+/models/
+*.hef
+
+# Database dumps and warehouse archives, per docs/upgrading.md.
+*.dump
+*.tar.gz
+
+.DS_Store
+*.swp
+*~
