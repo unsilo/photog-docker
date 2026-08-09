@@ -81,6 +81,27 @@ services:
       #   PHOTOG_HAILO_API=infer_model   # force the Hailo-10H path
       PHOTOG_HAILO_API: ${PHOTOG_HAILO_API:-}
 
+      # Captioning (qwen2) mitigations. Both default to off, so they can be
+      # turned on one at a time and attributed.
+      #
+      # A VLM instance degrades as it runs: a fresh one generates in ~9s and
+      # measurably slows within a dozen generations, and on 2026-08-09 a worker
+      # failed outright at generation 394 with "Failed to read generator" and
+      # then failed identically on every photo until it was restarted. The
+      # worker now reloads the model after a failed generation by itself, so
+      # one poisoned instance costs one photo; these two are for the underlying
+      # accumulation.
+      #
+      #   PHOTOG_VLM_OPTIMIZE_MEMORY=1   ask HailoRT to economise on-die memory.
+      #     The model is most of the card — ~3656MB of 7221 resident at idle,
+      #     ~6815MB while generating. About 400MB of headroom.
+      #   PHOTOG_VLM_RECYCLE_EVERY=50    reload the model every N generations.
+      #     Removes the cliff and the slowdown at the cost of a reload. Blunt,
+      #     and it masks whatever is accumulating — use it to make captioning
+      #     usable, not to consider the problem solved.
+      PHOTOG_VLM_OPTIMIZE_MEMORY: ${PHOTOG_VLM_OPTIMIZE_MEMORY:-}
+      PHOTOG_VLM_RECYCLE_EVERY: ${PHOTOG_VLM_RECYCLE_EVERY:-}
+
     volumes:
       # The host's python bindings, mounted as a single package rather than by
       # putting the host's whole dist-packages on the path — which would shadow
