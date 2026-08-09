@@ -125,14 +125,24 @@ Then read **[docs/hailo.md](docs/hailo.md)**. The short version:
    Hailo-10H) and reboot. Nothing in a container can do this for you.
 2. Run `./scripts/hailo-detect.sh`, which checks the four things that have to
    line up and prints the `.env` lines to paste.
-3. Put your `.hef` model files somewhere and set `PHOTOG_MODELS_PATH`.
+3. Set `PHOTOG_MODELS_PATH` in `.env`, then `./scripts/download-models.sh` —
+   it picks the right architecture and SDK version and verifies what it fetched.
 4. Bring the stack up with the overlay:
    ```bash
    docker compose -f docker-compose.yml -f docker-compose.hailo.yml up -d
    ```
 5. Enable a classifier at `/classifier`.
 
-**This path is experimental in 0.1.0 and has not been verified end to end.** The
+Captioning additionally needs **HailoRT 5.3.0**, which is newer than
+`apt install hailo-h10-all` gives you — `./scripts/upgrade-hailort.sh` handles
+that, with `./scripts/rollback-hailort.sh` to undo it.
+
+**Status:** detection and classification are confirmed working in Docker on a
+Raspberry Pi 5 + Hailo-10H. Captioning needs HailoRT 5.3.0, which is newer than
+the Raspberry Pi archive ships — see [docs/hailo.md](docs/hailo.md). The Hailo-8
+path is untested.
+
+The
 image ships no HailoRT python bindings — they are not on PyPI, and baking one
 version in would be wrong for every host running a different driver — so the
 overlay borrows the host's copy. That keeps driver, library and bindings in

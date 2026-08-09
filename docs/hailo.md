@@ -165,34 +165,46 @@ and model-zoo terms are a licensing question of their own.
 mkdir -p ~/photog/models
 ```
 
-Set `PHOTOG_MODELS_PATH=/home/<you>/photog/models` in `.env` and put the files
-there. Get builds for the **right device** and a HailoRT version matching yours
-— `hailo8/` and `hailo10h/` are different compilations of the same network and
-are not interchangeable:
+Set `PHOTOG_MODELS_PATH=/home/<you>/photog/models` in `.env`, then:
 
-```
-https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v<version>/<arch>/<model>.hef
+```bash
+./scripts/download-models.sh
 ```
 
-Filenames must match what the classifier rows ask for:
+It detects your architecture from the device and your SDK version from the
+installed runtime, downloads to `PHOTOG_MODELS_PATH`, **verifies the SDK version
+recorded in the downloaded bytes before installing the file**, and normalises
+the filename. `--dry-run` shows what it would fetch.
 
-| Classifier | Filename |
+That verification is the point. A HEF of the wrong architecture or the wrong SDK
+version **exists**, passes the startup check, and fails later — on the vision
+path it may not fail at all, it may just be wrong. And upstream publishes the
+VLM as `Qwen2-VL-2B-Instruct.hef` while the classifier row asks for
+`qwen2-vl-2b-instruct.hef`; Linux is case-sensitive, and a case-only mismatch
+resolves silently to a file that is not there.
+
+By hand, if you prefer. Two upstreams, two path shapes:
+
+```
+vision   https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v<ver>/<arch>/<model>.hef
+genai    https://dev-public.hailo.ai/v<ver>/blob/<Model>.hef
+```
+
+Filenames on disk must match what the classifier rows ask for:
+
+| Classifier | Filename on disk |
 |---|---|
 | ResNet-50 scene classification | `resnet_v1_50.hef` |
 | YOLOv11m detection | `yolov11m.hef` |
 | YOLOv8m detection | `yolov8m.hef` |
+| Qwen2-VL captioning | `qwen2-vl-2b-instruct.hef` |
 
-A HEF's architecture is checkable; its build version is not, at least not by
-`hailortcli`:
+`hailortcli parse-hef` reports a HEF's architecture. It does **not** report its
+build version — for that:
 
 ```bash
-hailortcli parse-hef resnet_v1_50.hef          # architecture
-head -c 200000 resnet_v1_50.hef | strings | grep sdk-version    # build version
+head -c 200000 resnet_v1_50.hef | strings | grep sdk-version
 ```
-
-A HEF of the wrong architecture or the wrong SDK version **exists**, passes the
-startup check, and fails later. Worth checking both before blaming anything
-else.
 
 ### 4. Start with the overlay
 
@@ -341,6 +353,90 @@ PHOTOG_HAILO_API=vstreams        # Hailo-8
 Runtime, not a rebuild. Leave it unset otherwise — a wrong value forces an API
 the chip does not implement onto every photo.
 
+### `HAILO_INVALID_OPERATION` (6) — "Failed to create VLM"
+
+Detection and classification work; captioning fails instantly with a status code
+and nothing else:
+
+```
+[HailoRT] [error] CHECK_SUCCESS failed with status=HAILO_INVALID_OPERATION(6) - Failed to create VLM
+[error] VLM worker failed to boot: "6"
+```
+
+**This asymmetry is the most misleading thing in the stack.** The vision models
+load through a low-level path that does not check the HEF's SDK version. The
+GenAI wrapper validates it up front and rejects — naming neither the version nor
+the file. So "ResNet and YOLO work, captioning doesn't" is not evidence that the
+VLM model is bad.
+
+Three causes, all producing exactly this. Check in this order, because the first
+is free:
+
+**1. The HEF was never found.** Nothing validates that the file exists before
+the worker starts, so a missing model reaches HailoRT as a status code rather
+than as "no such file". The log says which path was used:
+
+```bash
+docker compose logs photog | grep -iE "VLM HEF|falling back"
+```
+
+`No VLM HEF in /app_cache/models; falling back to …/priv/qwen2-vl-2b-instruct.hef`
+means the mount is empty or the name is wrong — **and the `priv/` copy does not
+exist in this image**, because it is 3.1 GB and deliberately excluded. The file
+must be in `PHOTOG_MODELS_PATH`, named exactly `qwen2-vl-2b-instruct.hef`.
+Upstream ships it as `Qwen2-VL-2B-Instruct.hef`; Linux is case-sensitive, and a
+case-only mismatch is logged as a warning rather than failing.
+
+```bash
+docker compose exec photog ls -l /app_cache/models
+```
+
+**2. HailoRT is older than 5.3.0.** The likeliest cause on a freshly installed
+Pi. The Raspberry Pi archive caps every `h10-` package at **5.1.1**, and **no VLM
+HEF is published below 5.3.0** — so a stock `apt install hailo-h10-all` gives you
+a runtime that cannot load any captioning model in existence.
+
+```bash
+hailortcli --version                                              # on the host
+head -c 200000 qwen2-vl-2b-instruct.hef | strings | grep sdk-version
+```
+
+If those disagree, that is the whole answer, and there is a script for it:
+
+```bash
+./scripts/upgrade-hailort.sh --dry-run          # read what it will do first
+./scripts/upgrade-hailort.sh --debs ~/hailo-5.3.0
+```
+
+See [Upgrading to HailoRT 5.3.0](#upgrading-to-hailort-530) below — it is not a
+routine `apt upgrade` and there are things you give up.
+
+**Then re-run `scripts/hailo-detect.sh` — see below.**
+
+**3. Not a Hailo-10H.** Captioning needs one. On a Hailo-8 there is nothing to
+fix.
+
+### After changing HailoRT on the host, re-run the detection
+
+This overlay mounts the host's library **by its exact versioned soname**, which
+is what keeps the container in lockstep with the driver. The cost is that a host
+upgrade invalidates your `.env`: `HAILORT_LIB` and `HAILORT_SONAME` still name
+`libhailort.so.5.1.1`, which no longer exists.
+
+Docker creates a **directory** at a missing bind-mount source, so the container
+comes up with a directory where a library should be and fails at import — a
+confusing error about a file that is right there.
+
+```bash
+cd ~/photog
+# remove the old HAILO_GID / HAILO_PYTHON_PACKAGE / HAILORT_* lines from .env
+./scripts/hailo-detect.sh --append
+docker compose -f docker-compose.yml -f docker-compose.hailo.yml up -d
+```
+
+No rebuild and no re-pull — the image never contained a HailoRT version to be
+wrong about. That is the whole point of borrowing the host's.
+
 ### Tags appear, but they are wrong
 
 Take this seriously rather than as a quality issue. A scrambled class list or an
@@ -355,14 +451,97 @@ labels look shifted rather than random, suspect a 1001-class model against a
 
 ---
 
+## Upgrading to HailoRT 5.3.0
+
+**Only on a Hailo-10H, and only if you want captioning.** Detection and
+classification already work on 5.1.1 and gain nothing from this.
+
+`4.x is the Hailo-8 stack, 5.x is the Hailo-10H stack.` Putting a Hailo-8 on the
+5.x line produces `HAILO_STREAM_NOT_ACTIVATED(72)` and `HAILO_STREAM_ABORT(63)`
+mid-inference, which reads as an application bug and takes an evening to unpick.
+`upgrade-hailort.sh` asks the device its architecture and refuses if it is not a
+Hailo-10H. Do not talk yourself past that check.
+
+### You supply the packages
+
+Hailo's Developer Zone needs a login, so nothing can fetch these for you.
+Download into one directory — `~/hailo-5.3.0` by default:
+
+```
+hailort_5.3.0_arm64.deb
+hailort-pcie-driver_5.3.0_all.deb
+hailort-5.3.0-cp313-cp313-linux_aarch64.whl
+```
+
+The wheel is not optional and **the runtime deb does not contain it**. Without
+it you end up with a working accelerator no Python can talk to — and nothing for
+the container mount to mount. `cp313` is for Raspberry Pi OS Trixie; match the
+tag to `python3 -V` on the host.
+
+### Run it
+
+```bash
+cd ~/photog
+./scripts/upgrade-hailort.sh --dry-run
+./scripts/upgrade-hailort.sh --debs ~/hailo-5.3.0
+```
+
+It stops the stack, caches your current packages so a rollback is possible,
+swaps the runtime, patches and rebuilds the PCIe driver for your kernel, holds
+the packages, and verifies that `hailo_platform.genai.VLM` actually imports —
+which is the check that distinguishes "5.3.0 is installed" from "captioning will
+work".
+
+### What you are trading away
+
+**apt stops managing this.** The Pi archive ships `h10-hailort`; Hailo ships
+`hailort`. They cannot coexist, so the archive's packages are removed.
+Afterwards apt sees `hailort` with an archive candidate of **4.23.0 — a Hailo-8
+runtime — sitting below what you installed**. One stray `apt upgrade` reinstates
+it. The script runs `apt-mark hold`; leave the hold alone.
+
+**The PCIe driver may stop being DKMS-from-apt** and become a module built from
+an unmerged pull request. Every kernel upgrade, you rebuild it. A kernel bump
+that silently fails to rebuild looks exactly like dead hardware.
+
+### Rolling back
+
+```bash
+./scripts/rollback-hailort.sh
+```
+
+Only works if `upgrade-hailort.sh` ran first — it is what cached the old debs.
+The archive is under no obligation to keep serving a version you stopped asking
+for, so a rollback that needs a remote to cooperate is not a rollback.
+
+---
+
 ## Captioning (Hailo-10H only)
 
-Image captioning needs a Hailo-10H, HailoRT 5.3.0 or newer, and a VLM HEF of
-about 3 GB. It is not available on a Hailo-8 — and on a Hailo-8 the VLM worker
-still opens a device on its way to failing, where a lingering one locks the
-vision worker out.
+Image captioning needs a Hailo-10H, **HailoRT 5.3.0 or newer**, and a VLM HEF of
+about 3 GB.
 
-Leave the captioning classifier disabled unless you have a Hailo-10H.
+The 5.3.0 floor is the part that catches people. `apt install hailo-h10-all`
+gives you **5.1.1** — the Raspberry Pi archive caps every `h10-` package there —
+and no VLM HEF is published below 5.3.0. Detection and classification work fine
+on 5.1.1, so the box looks healthy right up until you enable captioning and get
+`HAILO_INVALID_OPERATION(6)` with no explanation. 5.3.0 comes from Hailo's own
+debs, which replace the archive's packages rather than upgrading them, plus a
+separate python wheel.
+
+Captioning is not available on a Hailo-8 at all — and there, the VLM worker
+still opens a device on its way to failing, where a lingering one locks the
+vision worker out of it.
+
+Leave the captioning classifier disabled unless you have a Hailo-10H on 5.3.0+.
+
+Two behaviours worth knowing before you point it at a library:
+
+- **It will not decline, it will invent.** A 2B model captions flat synthetic
+  images — screenshots, logos, clip art, scanned documents — confidently and
+  wrongly. Photographs are what it is good at.
+- Captions are written to the database as fact. There is no confidence score to
+  filter on.
 
 ---
 

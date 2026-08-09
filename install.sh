@@ -85,11 +85,14 @@ for f in docker-compose.yml docker-compose.hailo.yml nginx.conf .env.example; do
 done
 
 mkdir -p scripts
-if curl -fsSL "${RAW}/scripts/hailo-detect.sh" -o scripts/hailo-detect.sh 2>/dev/null; then
-  chmod +x scripts/hailo-detect.sh
-else
-  warn "could not fetch scripts/hailo-detect.sh (only needed for Hailo setups)"
-fi
+for s in hailo-detect.sh download-models.sh upgrade-hailort.sh rollback-hailort.sh; do
+  if curl -fsSL "${RAW}/scripts/${s}" -o "scripts/${s}" 2>/dev/null; then
+    chmod +x "scripts/${s}"
+  else
+    rm -f "scripts/${s}"
+    warn "could not fetch scripts/${s} (only needed for Hailo setups)"
+  fi
+done
 
 # --- .env ------------------------------------------------------------------
 
