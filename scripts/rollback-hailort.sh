@@ -160,7 +160,7 @@ fi
 
 FAILED=0
 modinfo hailo1x_pci 2>/dev/null | grep -E '^(version|filename)' || { warn "modinfo hailo1x_pci found nothing"; FAILED=1; }
-ls -l /dev/hailo* 2>/dev/null || { warn "no /dev/hailo* device node"; FAILED=1; }
+ls -l /dev/hailo[0-9]* /dev/h1x-[0-9]* 2>/dev/null || { warn "no Hailo device node (looked for /dev/hailo[0-9]* and /dev/h1x-[0-9]*)"; FAILED=1; }
 hailortcli --version || FAILED=1
 sudo hailortcli fw-control identify || { warn "fw-control identify failed"; FAILED=1; }
 /usr/bin/python3 -c "import hailo_platform; print('hailo_platform', hailo_platform.__version__)" || FAILED=1
@@ -169,7 +169,8 @@ if [[ $FAILED -ne 0 ]]; then
   warn "verification did not fully pass."
   warn "Reboot first — a driver swap without one often looks exactly like this."
   warn "Still failing after a reboot: sudo apt install --reinstall hailo-h10-all"
-  warn "No /dev/hailo0 and dmesg mentions firmware: sudo apt install --reinstall hailofw"
+  warn "No device node and dmesg mentions firmware: reinstall the package owning"
+  warn "  /usr/lib/firmware/hailo (dpkg -S). NOT hailofw — that is Hailo-8 firmware."
   exit 1
 fi
 

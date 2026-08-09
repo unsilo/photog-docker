@@ -504,6 +504,118 @@ it. The script runs `apt-mark hold`; leave the hold alone.
 an unmerged pull request. Every kernel upgrade, you rebuild it. A kernel bump
 that silently fails to rebuild looks exactly like dead hardware.
 
+### `error gathering device information ... no such file or directory`
+
+```
+Error response from daemon: error gathering device information while adding
+custom device "/dev/hailo0": no such file or directory
+```
+
+**The char device is not always `/dev/hailo0`.** Each driver generation names it
+differently, and the overlay bind-mounts it by path:
+
+| Module | HailoRT | From | Node |
+|---|---|---|---|
+| `hailo_pci` | 4.x | `hailo-all` (Hailo-8) | `/dev/hailo0` |
+| `hailo1x_pci` | 5.1.1 | RPi archive `hailo-h10-all` | `/dev/hailo0` |
+| `hailo1x` | 5.3.0 | Hailo's own debs | **`/dev/h1x-0`** |
+
+Confirmed on a Pi 5 + Hailo-10H: upgrading 5.1.1 → 5.3.0 moves the node, and the
+old path simply stops existing. `dmesg` names it —
+`hailo1x 0001:01:00.0: Device created at /dev/h1x-0`.
+
+Find it and record it:
+
+```bash
+ls -l /dev/hailo* /dev/h1x-* 2>/dev/null
+sudo dmesg | grep -i 'device created'
+```
+
+```
+HAILO_DEVICE=/dev/h1x-0
+```
+
+`hailo-detect.sh` searches all the known names and writes this for you. The
+overlay defaults to `/dev/hailo0` when it is unset, which covers 4.x and 5.1.1.
+
+### The device node is gone after the upgrade
+
+```
+Error response from daemon: error gathering device information while adding
+custom device "/dev/hailo0": no such file or directory
+```
+
+That Docker error is a consequence, not the problem — Compose cannot attach a
+device that does not exist.
+
+**Reboot first.** Swapping a PCIe driver under a live kernel does not re-run the
+bus probe. The old module stayed resident through the whole upgrade — which is
+why the device kept working right up until it was unloaded — and the new one
+often does not bind until a cold start. This is the single most common outcome
+and it is not a failed upgrade.
+
+```bash
+sudo reboot
+# then
+ls -l /dev/hailo0
+sudo hailortcli fw-control identify
+```
+
+Your photos are not down meanwhile. The base stack needs no accelerator:
+
+```bash
+cd ~/photog && docker compose up -d      # no -f overlay
+```
+
+Still missing after a reboot? `dmesg` answers it:
+
+```bash
+lspci -nn | grep -i hailo          # is the card on the bus at all
+lsmod | grep -i hailo              # is a module loaded, and which
+sudo dmesg | grep -i hailo | tail -30
+modinfo hailo1x_pci | head -3 ; uname -r ; dkms status
+ls -l /usr/lib/firmware/hailo/
+```
+
+| What `dmesg` says | What it means |
+|---|---|
+| `probe ... failed with error -2`, or anything about firmware | The firmware went with the removed packages. |
+| `sysfs: cannot create duplicate filename '/class/hailo_chardev'` | A stale legacy `hailo_pci` is winning the probe. |
+| nothing at all, and `lspci` shows the card | The module is not loading — check `dkms status` against `uname -r`. |
+| `lspci` shows nothing | Hardware or PCIe seating. Not a software problem. |
+
+**Firmware:** reinstall the deb that owns it. **Not** `apt install --reinstall
+hailofw` — that is the Raspberry Pi archive's **Hailo-8 / 4.x** firmware
+package, it is the fix from the 4.x notes, and on a 5.3.0 Hailo-10H it is the
+wrong firmware. On a box that has moved to Hailo's own debs it usually is not
+even installable, which is your clue.
+
+```bash
+dpkg -L hailort | grep -i firmware        # confirm which package owns it
+sudo dpkg -i ~/hailo-5.3.0/hailort_5.3.0_arm64.deb
+```
+
+`dpkg -S /lib/firmware/...` will tell you "no path found" — it does not resolve
+the usrmerge `/lib` → `/usr/lib` symlink. Query `/usr/lib`. And do not follow
+that with `rm`; a live library has been deleted that way here.
+
+**Stale module:**
+
+```bash
+sudo rm -f /lib/modules/$(uname -r)/{updates/dkms,extra,kernel/drivers/misc}/hailo_pci.ko*
+sudo depmod -a && sudo reboot
+```
+
+**Built for the wrong kernel** — `dkms status` naming a kernel that is not
+`uname -r`:
+
+```bash
+cd ~/hailort-drivers/linux/pcie && sudo make install_dkms
+```
+
+**Do not roll back for a missing device node.** Rolling back re-does the whole
+upgrade in reverse to fix something a reboot usually fixes.
+
 ### Rolling back
 
 ```bash

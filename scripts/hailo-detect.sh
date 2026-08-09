@@ -34,9 +34,28 @@ info() { printf '      %s\n' "$*"; }
 
 FAILED=0
 HAILO_GID=""
+HAILO_DEVICE=""
 HAILO_PYTHON_PACKAGE=""
 HAILORT_LIB=""
 HAILORT_SONAME=""
+
+# The char device is NOT always /dev/hailo0. Each driver generation names it
+# differently, and the container has to bind-mount the one that exists:
+#
+#   hailo_pci    (HailoRT 4.x, Hailo-8, `hailo-all`)          /dev/hailo0
+#   hailo1x_pci  (HailoRT 5.1.1, RPi archive `hailo-h10-all`) /dev/hailo0
+#   hailo1x      (HailoRT 5.3.0, Hailo's own debs)            /dev/h1x-0
+#
+# Confirmed on a Pi 5 + Hailo-10H after a 5.1.1 -> 5.3.0 upgrade: the node moved
+# and the old path simply stopped existing, which Docker reports as
+# "error gathering device information ... no such file or directory".
+# The patterns are expanded at the point of use, inside a nullglob region --
+# NOT stored in an array here. Array assignment globs immediately, and with
+# nullglob off an unmatched pattern survives as its own literal string, so a box
+# with no device would "find" three files named `/dev/hailo[0-9]*`. Quoted
+# expansion later does not re-glob, so turning nullglob on afterwards fixes
+# nothing. This is documentation; the live copy is in the search below.
+DEVICE_GLOBS_DOC='/dev/hailo[0-9]* /dev/h1x-[0-9]* /dev/hailo_chardev[0-9]*'
 
 echo
 echo "PhoTog — Hailo host detection"
@@ -44,20 +63,39 @@ echo "-----------------------------"
 
 # --- 1. the device ---------------------------------------------------------
 
-if [[ -e /dev/hailo0 ]]; then
-  ok "/dev/hailo0 exists"
-  HAILO_GID="$(stat -c '%g' /dev/hailo0 2>/dev/null || echo '')"
-  gname="$(stat -c '%G' /dev/hailo0 2>/dev/null || echo '?')"
+shopt -s nullglob
+FOUND_DEVICES=(/dev/hailo[0-9]* /dev/h1x-[0-9]* /dev/hailo_chardev[0-9]*)
+shopt -u nullglob
+
+if [[ ${#FOUND_DEVICES[@]} -gt 0 ]]; then
+  HAILO_DEVICE="${FOUND_DEVICES[0]}"
+  ok "device node ${HAILO_DEVICE}"
+  [[ ${#FOUND_DEVICES[@]} -gt 1 ]] && warn "more than one node found (${FOUND_DEVICES[*]}); using the first"
+
+  HAILO_GID="$(stat -c '%g' "$HAILO_DEVICE" 2>/dev/null || echo '')"
+  gname="$(stat -c '%G' "$HAILO_DEVICE" 2>/dev/null || echo '?')"
   if [[ -n "$HAILO_GID" ]]; then
     ok "owned by group ${gname} (gid ${HAILO_GID})"
   else
-    bad "could not stat /dev/hailo0"
+    bad "could not stat ${HAILO_DEVICE}"
   fi
 else
-  bad "/dev/hailo0 does not exist — nothing in a container can create it"
-  info "Hailo-8  / AI HAT+   : sudo apt install hailo-all      && sudo reboot"
-  info "Hailo-10H / AI HAT+ 2: sudo apt install hailo-h10-all  && sudo reboot"
-  info "then check: dmesg | grep -i hailo"
+  bad "no Hailo device node — nothing in a container can create one"
+  info "Looked for: ${DEVICE_GLOBS_DOC}"
+  info ""
+  info "Not installed yet?"
+  info "  Hailo-8  / AI HAT+   : sudo apt install hailo-all      && sudo reboot"
+  info "  Hailo-10H / AI HAT+ 2: sudo apt install hailo-h10-all  && sudo reboot"
+  info ""
+  info "Installed but no node — the driver did not bind. In this order:"
+  info "  lspci -nn | grep -i hailo        # card on the bus at all"
+  info "  lsmod | grep -i hailo            # module loaded"
+  info "  dkms status                      # 'installed', not 'added'"
+  info "  sudo dmesg | grep -i hailo       # names the node it created, if any"
+  info ""
+  info "'added' rather than 'installed' means the DKMS build never ran:"
+  info "  sudo dkms build -m <module> -v <version> && sudo dkms install -m <module> -v <version>"
+  info "  sudo depmod -a && sudo modprobe -v <module>"
 fi
 
 if command -v hailortcli >/dev/null 2>&1; then
@@ -74,12 +112,25 @@ else
   warn "hailortcli not on PATH — cannot confirm the runtime version"
 fi
 
-for mod in hailo_pci hailo1x_pci; do
+for mod in hailo_pci hailo1x_pci hailo1x; do
   if modinfo "$mod" >/dev/null 2>&1; then
     mver="$(modinfo "$mod" 2>/dev/null | awk '/^version:/{print $2; exit}')"
     ok "kernel module ${mod} version ${mver:-unknown}"
   fi
 done
+
+# 'added' means the source is registered but was never built or installed —
+# no .ko on disk, modinfo finds nothing, dmesg stays silent. It looks exactly
+# like broken hardware and is one command from fixed.
+if command -v dkms >/dev/null 2>&1; then
+  while read -r line; do
+    case "$line" in
+      *installed*) ok "dkms: ${line}" ;;
+      *)           bad "dkms: ${line}"
+                   info "not 'installed' — the module was never built. See above." ;;
+    esac
+  done < <(dkms status 2>/dev/null | grep -i hailo)
+fi
 
 # --- 2. the python bindings ------------------------------------------------
 
@@ -186,6 +237,7 @@ fi
 
 block="$(cat <<ENVEOF
 # --- Hailo, detected by scripts/hailo-detect.sh on $(date -u '+%Y-%m-%d %H:%M UTC') ---
+HAILO_DEVICE=${HAILO_DEVICE}
 HAILO_GID=${HAILO_GID}
 HAILO_PYTHON_PACKAGE=${HAILO_PYTHON_PACKAGE}
 HAILORT_LIB=${HAILORT_LIB}
@@ -205,7 +257,7 @@ if [[ "$APPEND" == "1" ]]; then
     echo "no .env in $(pwd) — run this from your PhoTog directory" >&2
     exit 1
   fi
-  if grep -q '^HAILO_GID=' .env; then
+  if grep -qE '^(HAILO_GID|HAILO_DEVICE)=' .env; then
     echo "'.env' already has HAILO_GID — not appending. Edit it by hand." >&2
     exit 1
   fi

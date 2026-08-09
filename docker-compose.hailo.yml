@@ -28,12 +28,24 @@
 services:
   photog:
     devices:
-      # The kernel driver behind this node lives on the host and is not
-      # something any container can install. If `ls -l /dev/hailo0` fails on the
-      # host, no compose flag will help: that is `hailo-all` (or `hailo-h10-all`
-      # for a Hailo-10H) plus a reboot, and on a Pi 5 possibly PCIe enabled in
-      # /boot/firmware/config.txt.
-      - /dev/hailo0:/dev/hailo0
+      # NOT always /dev/hailo0. Each driver generation names the char device
+      # differently, and this is bind-mounted by path, so a wrong name is
+      #
+      #   Error response from daemon: error gathering device information while
+      #   adding custom device "/dev/hailo0": no such file or directory
+      #
+      #   hailo_pci    HailoRT 4.x    Hailo-8, `hailo-all`          /dev/hailo0
+      #   hailo1x_pci  HailoRT 5.1.1  RPi archive `hailo-h10-all`   /dev/hailo0
+      #   hailo1x      HailoRT 5.3.0  Hailo's own debs              /dev/h1x-0
+      #
+      # Confirmed on a Pi 5 + Hailo-10H: upgrading 5.1.1 -> 5.3.0 moves the node
+      # and the old path stops existing. scripts/hailo-detect.sh finds whichever
+      # one is there and writes HAILO_DEVICE; the default covers 4.x and 5.1.1.
+      #
+      # The kernel driver behind the node lives on the host and is not something
+      # any container can install. If no node exists at all, no compose flag
+      # will help — see docs/hailo.md.
+      - ${HAILO_DEVICE:-/dev/hailo0}:${HAILO_DEVICE:-/dev/hailo0}
 
     # `devices:` copies the host node's owner, group and mode into the
     # container. The container runs as uid 1000 with no supplementary groups, so
@@ -42,7 +54,7 @@ services:
     # for an hour. Numeric gid, because the group name would have to exist
     # inside the container to resolve.
     #
-    #   getent group hailo | cut -d: -f3
+    #   stat -c '%G %g' "$HAILO_DEVICE"
     group_add:
       - "${HAILO_GID:?run scripts/hailo-detect.sh — it prints HAILO_GID for this host}"
 

@@ -364,21 +364,47 @@ if [[ $DRY_RUN -eq 0 ]]; then
     fi
   fi
 
-  if sudo dpkg --configure hailort-pcie-driver 2>&1 | tail -5; then
-    if modinfo hailo1x_pci >/dev/null 2>&1; then
-      info "the shipped driver built after patching — skipping the PR route"
-      # The pre-upgrade module is still resident (that is why /dev/hailo0 kept
-      # working through all of this) and will keep serving until unloaded. Swap
-      # it, then check modinfo reports the NEW version — a module of the right
-      # name loading is not evidence it is the one just built.
-      sudo modprobe -r hailo1x_pci 2>/dev/null || true
-      sudo depmod -a
-      sudo modprobe -v hailo1x_pci
-      LOADED_VER="$(modinfo -F version hailo1x_pci 2>/dev/null || echo unknown)"
-      info "hailo1x_pci version now ${LOADED_VER}"
-      [[ "${LOADED_VER}" == "${VERSION}"* ]] || warn "expected ${VERSION}; check 'dkms status'"
-      SKIP_PR=1
+  sudo dpkg --configure hailort-pcie-driver 2>&1 | tail -5 || true
+
+  # `modinfo` finding a module of the right name is NOT evidence the new one was
+  # installed, and gating on it here is a bug that cost a real evening: the
+  # archive's 5.1.1 module was still on disk, modinfo succeeded, the fallback
+  # build route was skipped, the OLD module was loaded, a device node appeared,
+  # and verification passed. The upgrade "worked" and the driver was the wrong
+  # one — which surfaced only after a reboot, as hardware that had vanished.
+  #
+  # DKMS is the honest source. `added` means the source is registered and was
+  # never built; only `installed` means there is a .ko on disk for this kernel.
+  DKMS_STATE="$(dkms status 2>/dev/null | grep -i hailo | head -1)"
+  info "dkms: ${DKMS_STATE:-nothing registered}"
+
+  if [[ "$DKMS_STATE" == *installed* ]]; then
+    info "the shipped driver built after patching — skipping the PR route"
+    # The pre-upgrade module is still resident — that is why the device kept
+    # working through all of this — and will keep serving until unloaded.
+    sudo modprobe -r hailo1x_pci hailo1x 2>/dev/null || true
+    sudo depmod -a
+    sudo modprobe -v hailo1x_pci 2>/dev/null || sudo modprobe -v hailo1x || true
+
+    # Check the version of what is actually loaded now. A module of the right
+    # name is not evidence it is the one just built.
+    LOADED_VER="$(modinfo -F version hailo1x_pci 2>/dev/null || modinfo -F version hailo1x 2>/dev/null || echo unknown)"
+    info "loaded driver version ${LOADED_VER}"
+    if [[ "${LOADED_VER}" != "${VERSION}"* ]]; then
+      # Fatal, not a warning. Carrying on here is how the wrong driver survives
+      # to the end of the script wearing a green tick.
+      die "expected driver ${VERSION}, loaded ${LOADED_VER}.
+
+  The old module is probably still winning. Check:
+      dkms status ; uname -r
+      find /lib/modules/\$(uname -r) -iname '*hailo*'
+
+  Nothing is broken — the packages are in place and the build is the only
+  step left. Do NOT roll back for this."
     fi
+    SKIP_PR=1
+  else
+    warn "dkms reports '${DKMS_STATE:-nothing}', not 'installed' — the module was not built"
   fi
 fi
 
@@ -434,8 +460,54 @@ fi
 FAILED=0
 
 modinfo hailo1x_pci 2>/dev/null | grep -E '^(version|filename)' || { warn "modinfo hailo1x_pci found nothing"; FAILED=1; }
-ls -l /dev/hailo* 2>/dev/null || { warn "no /dev/hailo* device node"; FAILED=1; }
 hailortcli --version || FAILED=1
+
+# The device node is checked on its own, because "missing" here almost always
+# means "needs a reboot" rather than "the upgrade failed" — and a rollback is
+# the wrong response to a reboot. Swapping a PCIe driver under a live kernel
+# does not re-run the bus probe: the old module was resident throughout, which
+# is why /dev/hailo0 kept working right up until it was unloaded.
+if ! ls -l /dev/hailo[0-9]* /dev/h1x-[0-9]* 2>/dev/null; then
+  echo
+  warn "NO /dev/hailo0 — this is expected at this point. REBOOT, then re-check."
+  info ""
+  info "    sudo reboot"
+  info ""
+  info "After the reboot:"
+  info ""
+  info "    ls -l /dev/hailo0 /dev/h1x-0     # the name varies by driver"
+  info "    sudo hailortcli fw-control identify"
+  info ""
+  info "Still missing? Work down this list — dmesg is the one that answers it:"
+  info ""
+  info "    lspci -nn | grep -i hailo          # is the card on the bus at all"
+  info "    lsmod | grep -i hailo              # is a module loaded, and which"
+  info "    sudo dmesg | grep -i hailo | tail -30"
+  info "    modinfo hailo1x_pci | head -3; uname -r; dkms status"
+  info "    ls -l /usr/lib/firmware/hailo/"
+  info ""
+  info "  'probe ... failed with error -2' or a firmware complaint -> the firmware"
+  info "  went missing when the old packages were removed. Reinstall the deb that"
+  info "  owns it — NOT the archive's hailofw, which is Hailo-8 firmware:"
+  info "      dpkg -L hailort | grep -i firmware"
+  info "      sudo dpkg -i ${DEB_DIR}/$(basename "${RUNTIME_DEB}")"
+  info ""
+  info "  'sysfs: cannot create duplicate filename /class/hailo_chardev' -> a stale"
+  info "  legacy hailo_pci module is winning the probe. Delete it and depmod:"
+  info "      sudo rm -f /lib/modules/\$(uname -r)/{updates/dkms,extra,kernel/drivers/misc}/hailo_pci.ko*"
+  info "      sudo depmod -a && sudo reboot"
+  info ""
+  info "  module built for a different kernel (dkms status disagrees with uname -r):"
+  info "      cd ${DRIVER_SRC}/linux/pcie && sudo make install_dkms"
+  info ""
+  info "Your photos are not down meanwhile — the base stack needs no accelerator:"
+  info "      cd ${COMPOSE_DIR} && docker compose up -d"
+  info ""
+  warn "Do NOT roll back for this. A missing node after a driver swap is not a"
+  warn "failed upgrade, and rolling back re-does all of it in reverse."
+  exit 2
+fi
+
 sudo hailortcli fw-control identify || { warn "fw-control identify failed"; FAILED=1; }
 
 if /usr/bin/python3 -c "import hailo_platform; print('hailo_platform', hailo_platform.__version__)"; then
