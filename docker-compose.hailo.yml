@@ -1,0 +1,98 @@
+# Hailo overlay — EXPERIMENTAL in 0.1.0. Read docs/hailo.md before using it.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.hailo.yml up -d
+#
+# The published image ships no `hailo_platform`: HailoRT's python bindings are
+# not on PyPI, they arrive on the host from Hailo's apt packages, and the exact
+# version has to match the host's kernel driver. Baking one version into the
+# image would be wrong for everyone else.
+#
+# So this overlay borrows the host's copy. Four things get mounted or set:
+#
+#   /dev/hailo0                the accelerator itself
+#   hailo_platform             the host's python bindings, onto PYTHONPATH
+#   libhailort.so.<ver>        the library those bindings link against
+#   *.hef                      the compiled models, which are in no image
+#
+# Because the bindings come from the host, driver/library/binding versions
+# cannot drift apart — the failure mode this whole stack is famous for. What it
+# trades for that is a Python ABI requirement: the bindings are compiled for one
+# CPython minor version, and they have to match the interpreter INSIDE the
+# container. Run scripts/hailo-detect.sh; it checks this and prints the exact
+# .env lines to paste.
+#
+# Nothing is enabled by default. Turn a classifier on at /classifier once its
+# HEF is in place, and read its `load_error` if it does not come up — the
+# workers report failures there rather than crashing.
+
+services:
+  photog:
+    devices:
+      # The kernel driver behind this node lives on the host and is not
+      # something any container can install. If `ls -l /dev/hailo0` fails on the
+      # host, no compose flag will help: that is `hailo-all` (or `hailo-h10-all`
+      # for a Hailo-10H) plus a reboot, and on a Pi 5 possibly PCIe enabled in
+      # /boot/firmware/config.txt.
+      - /dev/hailo0:/dev/hailo0
+
+    # `devices:` copies the host node's owner, group and mode into the
+    # container. The container runs as uid 1000 with no supplementary groups, so
+    # a `crw-rw---- root:hailo` node is EACCES on every open() — which looks
+    # exactly like a driver mismatch and will send you chasing HailoRT versions
+    # for an hour. Numeric gid, because the group name would have to exist
+    # inside the container to resolve.
+    #
+    #   getent group hailo | cut -d: -f3
+    group_add:
+      - "${HAILO_GID:?run scripts/hailo-detect.sh — it prints HAILO_GID for this host}"
+
+    environment:
+      # Where the mounts below land.
+      PYTHONPATH: /opt/hailo/python
+      LD_LIBRARY_PATH: /opt/hailo/lib
+
+      # Not an arbitrary label. HailoRT hands the device exclusively to the
+      # first process that opens it unless every opener names the same group,
+      # and its GenAI stack accepts this literal id and no other — which is what
+      # lets detection and captioning run at the same time. hailo_server.py and
+      # vlm_server.py must agree, so it is set once here.
+      HAILO_GROUP_ID: SHARED
+
+      # Escape hatch, runtime rather than a rebuild. The worker picks its
+      # inference API from the HailoRT major version — 4.x uses vstreams
+      # (Hailo-8), 5.x uses InferModel (Hailo-10H) — and falls back
+      # behaviourally if the device answers NOT_IMPLEMENTED. Leave this unset
+      # unless that goes wrong; a wrong value forces an API the chip does not
+      # implement onto every photo.
+      #
+      #   PHOTOG_HAILO_API=vstreams      # force the Hailo-8 path
+      #   PHOTOG_HAILO_API=infer_model   # force the Hailo-10H path
+      PHOTOG_HAILO_API: ${PHOTOG_HAILO_API:-}
+
+    volumes:
+      # The host's python bindings, mounted as a single package rather than by
+      # putting the host's whole dist-packages on the path — which would shadow
+      # the container's numpy and opencv with the host's and give you an ABI
+      # mismatch in place of a version mismatch.
+      - ${HAILO_PYTHON_PACKAGE:?run scripts/hailo-detect.sh — it prints HAILO_PYTHON_PACKAGE}:/opt/hailo/python/hailo_platform:ro
+
+      # libhailort itself. Mounted under its exact soname because that is the
+      # name the bindings' compiled extension asks the loader for; a plain
+      # `libhailort.so` will not satisfy a NEEDED of `libhailort.so.4.20.0`.
+      - ${HAILORT_LIB:?run scripts/hailo-detect.sh — it prints HAILORT_LIB}:/opt/hailo/lib/${HAILORT_SONAME:?run scripts/hailo-detect.sh — it prints HAILORT_SONAME}:ro
+
+      # Compiled models. Deliberately not in the image: they are large, and
+      # Hailo's Dataflow Compiler and model-zoo terms are a licensing question
+      # of their own. Mounted from the host rather than copied onto the cache
+      # volume so they survive `docker compose down -v` and are easy to swap
+      # when HailoRT moves.
+      #
+      # Get builds for the RIGHT DEVICE and a matching HailoRT version —
+      # hailo8/ and hailo10h/ are different compilations of the same network and
+      # are not interchangeable:
+      #
+      #   https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v<ver>/<arch>/<model>.hef
+      #
+      # Filenames must match what the classifier rows ask for: yolov8m.hef,
+      # yolov11m.hef, resnet_v1_50.hef.
+      - ${PHOTOG_MODELS_PATH:?set PHOTOG_MODELS_PATH to a host directory holding your .hef files}:/app_cache/models:ro

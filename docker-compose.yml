@@ -1,0 +1,156 @@
+# PhoTog — the whole server, in one file.
+#
+#   1. put this file, nginx.conf and .env.example in the same directory
+#   2. cp .env.example .env   and fill in the four required values
+#   3. docker compose up -d
+#
+# Runs on a Raspberry Pi 5, an older Pi, a NAS, or a laptop. Nothing here needs
+# an AI accelerator; the classifiers exist in the UI and ship disabled. For a
+# Hailo-8 or Hailo-10H, layer docker-compose.hailo.yml on top — see docs/hailo.md.
+
+name: photog
+
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-photog}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env — see .env.example}
+      POSTGRES_DB: ${POSTGRES_DB:-pho_tog_prod}
+    volumes:
+      # /var/lib/postgresql, NOT /var/lib/postgresql/data. Postgres 18 moved
+      # PGDATA to /var/lib/postgresql/18/docker and declares its VOLUME on the
+      # parent. Mount the old path and Docker quietly creates an anonymous
+      # volume for the real data directory: the named volume stays empty and the
+      # database is gone the next time the container is recreated.
+      - photog-db:/var/lib/postgresql
+    # The 64MB default gets tight once the gallery starts running the sorts and
+    # hash joins behind tag and album queries.
+    shm_size: 256mb
+    healthcheck:
+      test:
+        ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-photog} -d ${POSTGRES_DB:-pho_tog_prod}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging: &logging
+      # An unbounded json-file log will eventually eat the SD card.
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  photog:
+    image: tehsnappysoftware/photog:${PHOTOG_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        # The entrypoint runs migrations before it starts the endpoint, so
+        # without this gate the first boot races Postgres and the container
+        # crash-loops until the database happens to be up.
+        condition: service_healthy
+    ports:
+      # Loopback only. The `proxy` service below is the way in, and publishing
+      # 4000 on the LAN as well gives the same app two origins — which is how
+      # thumbnails end up 404ing for whoever used the "wrong" one, since image
+      # URLs are absolute and built from PHOTOG_IMAGE_URL_BASE. Bound to
+      # 127.0.0.1 so `curl localhost:4000` on the host still works for
+      # debugging. Set PHOTOG_DIRECT_BIND=0.0.0.0:4000 to expose it properly.
+      - "${PHOTOG_DIRECT_BIND:-127.0.0.1:4000}:4000"
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-photog}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-pho_tog_prod}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?generate one with `openssl rand -base64 48`}
+      PHX_HOST: ${PHX_HOST:?set PHX_HOST to the name you reach this server at}
+
+      # Absolute base for every <img> the UI emits. With the proxy on port 80
+      # this is just http://$PHX_HOST, which is also the app's own default.
+      # Publish the proxy on any other port and you must set this by hand,
+      # including the port — otherwise pages load while every thumbnail 404s
+      # with URLs that look perfectly correct in devtools.
+      PHOTOG_IMAGE_URL_BASE: ${PHOTOG_IMAGE_URL_BASE:-http://${PHX_HOST}}
+
+      # Websocket origins, comma-separated. Left blank the app derives a
+      # sensible list from PHX_HOST, which is correct for the default port-80
+      # setup. Set it when you reach the server by IP, through a TLS
+      # terminator, or on a non-80 port — the symptom of getting it wrong is a
+      # page that renders and then never becomes interactive.
+      PHOTOG_CHECK_ORIGIN: ${PHOTOG_CHECK_ORIGIN:-}
+
+      # Created on first boot, and only while the users table is empty.
+      # /users/register finishes over a magic-link email and this container has
+      # no mailer configured, so without these there is no way to log in.
+      PHOTOG_ADMIN_EMAIL: ${PHOTOG_ADMIN_EMAIL:-}
+      PHOTOG_ADMIN_PASSWORD: ${PHOTOG_ADMIN_PASSWORD:-}
+
+      # Self-service signup, off by default. PhoTog has no per-user ownership of
+      # photos, albums or tags — a second account is a second key to the same
+      # library, not a second library. See docs/configuration.md.
+      PHOTOG_ALLOW_REGISTRATION: ${PHOTOG_ALLOW_REGISTRATION:-false}
+
+      # The directory the import screen starts in. Bind-mounted below.
+      PHOTOG_PHOTO_SOURCE: /import
+
+      # Both python workers run under this interpreter. Set explicitly because
+      # Port.open/2 does no PATH lookup of its own.
+      PHOTOG_PYTHON: /usr/bin/python3
+
+      # Escape hatch for a bad migration: start the app without running
+      # PhoTog.Release.setup() so you can get a shell.
+      PHOTOG_SKIP_MIGRATIONS: ${PHOTOG_SKIP_MIGRATIONS:-false}
+
+      # A Pi 5 has 4 cores, and Postgres is competing for the same ones. 10 (the
+      # app default) mostly buys context switching.
+      POOL_SIZE: ${POOL_SIZE:-6}
+    volumes:
+      # Originals and thumbnails. MUST land on /app_warehouse: the image sets
+      # PHOTOG_WAREHOUSE to that path, and it is both where the ingestion
+      # pipeline writes and where /media is served from.
+      #
+      # Default is a named volume, which lives under /var/lib/docker — the SD
+      # card on a Pi. For external storage set PHOTOG_WAREHOUSE_PATH=/mnt/photos
+      # in .env; Compose treats a value containing a slash as a bind mount. The
+      # directory must be writable by uid 1000.
+      - ${PHOTOG_WAREHOUSE_PATH:-photog-warehouse}:/app_warehouse
+
+      # Upload staging, the Bumblebee/HuggingFace model cache, and (with an
+      # accelerator) HEF files under models/. Rebuildable, but keep it on a
+      # volume so an image upgrade does not re-download models.
+      - photog-cache:/app_cache
+
+      # Drop photos in here to import them. Created by install.sh; if you are
+      # writing .env by hand, `mkdir import` first — Docker will otherwise
+      # create it owned by root and the import screen will show it empty.
+      - ${PHOTOG_IMPORT_PATH:-./import}:/import
+    logging: *logging
+
+  proxy:
+    # nginx is here to answer on port 80, so that `http://photog.local` — no
+    # port — is a valid address. That one fact is what makes the app's default
+    # image URLs, the iOS/tvOS clients' PHOTOG_WEB_HOST and the websocket origin
+    # check all line up without threading a port through three places.
+    #
+    # `1-alpine` rather than a hard pin: nginx has been major version 1 for over
+    # a decade, and a floating minor on a reverse proxy is where you want
+    # security fixes to arrive without being asked.
+    image: nginx:1-alpine
+    restart: unless-stopped
+    depends_on:
+      - photog
+    ports:
+      - "${PHOTOG_HTTP_PORT:-80}:80"
+    volumes:
+      # Replaces the image's stock default.conf. Read-only so a compromised
+      # container cannot rewrite its own routing.
+      #
+      # This file must EXIST before the first `up`. Docker creates a *directory*
+      # at a missing bind-mount source, and nginx then fails on a config path
+      # that is not a file.
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    logging: *logging
+
+volumes:
+  photog-db:
+  photog-warehouse:
+  photog-cache:

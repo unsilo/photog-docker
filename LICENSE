@@ -1,0 +1,166 @@
+PhoTog End User Licence Agreement
+Version 1.0 — applies to PhoTog 0.1.0 and later until superseded
+
+Copyright (c) 2026 Steven Fuchs. All rights reserved.
+
+This is a licence to use the PhoTog software. It is not an open source licence.
+
+--------------------------------------------------------------------------------
+1. DEFINITIONS
+--------------------------------------------------------------------------------
+
+"Software" means the PhoTog application distributed as a container image from
+the tehsnappysoftware/photog repository on Docker Hub, including its
+documentation and any updates provided to you.
+
+"Licensor" means Steven Fuchs.
+
+"You" means the individual or entity exercising the rights granted here.
+
+"Configuration Files" means the Docker Compose files, nginx configuration,
+installation scripts and documentation published in the photog-docker
+repository. These are addressed separately in section 8.
+
+--------------------------------------------------------------------------------
+2. GRANT OF LICENCE
+--------------------------------------------------------------------------------
+
+Subject to your compliance with this Agreement, Licensor grants you a
+non-exclusive, non-transferable, revocable, royalty-free licence to:
+
+  (a) download, install and run the Software on hardware you own or control,
+      in any number of instances, for your own personal or internal
+      non-commercial use;
+
+  (b) make copies of the Software as reasonably necessary for backup and
+      disaster recovery.
+
+No other rights are granted. All rights not expressly granted are reserved.
+
+--------------------------------------------------------------------------------
+3. RESTRICTIONS
+--------------------------------------------------------------------------------
+
+You may not:
+
+  (a) sell, rent, lease, sublicense, distribute or otherwise make the Software
+      available to third parties, whether or not for a fee;
+
+  (b) offer the Software, or any service substantially based on it, to third
+      parties as a hosted or managed service;
+
+  (c) reverse engineer, decompile, disassemble or otherwise attempt to derive
+      the source code of the Software, except and only to the extent that
+      applicable law expressly permits this despite this limitation;
+
+  (d) modify, adapt or create derivative works of the Software;
+
+  (e) remove, obscure or alter any copyright, trademark or other proprietary
+      notice in the Software;
+
+  (f) use the Software to develop a competing product.
+
+Running the Software for the internal business purposes of an organisation you
+belong to is not "commercial use" for the purposes of section 2(a), provided the
+Software is not made available to that organisation's customers or to the
+public. If you are unsure whether your use is permitted, contact Licensor.
+
+--------------------------------------------------------------------------------
+4. YOUR DATA
+--------------------------------------------------------------------------------
+
+The Software is self-hosted. Your photographs, metadata and configuration remain
+on your own hardware. Licensor has no access to them, receives no telemetry from
+the Software, and asserts no rights over them whatsoever.
+
+You are responsible for backing up your own data. See docs/upgrading.md.
+
+--------------------------------------------------------------------------------
+5. THIRD-PARTY COMPONENTS
+--------------------------------------------------------------------------------
+
+The Software includes open source components licensed by their respective
+copyright holders under their own terms, including but not limited to Erlang/OTP
+and Elixir (Apache 2.0), the Phoenix framework (MIT), libvips (LGPL 2.1+),
+ImageMagick (ImageMagick Licence), and PostgreSQL client libraries (PostgreSQL
+Licence). Those terms govern those components and are not superseded by this
+Agreement. Nothing in section 3 restricts any right you have under those
+licences with respect to those components.
+
+The Software does not include Hailo firmware, Hailo runtime libraries, Hailo
+python bindings, or any compiled model (.hef) files. Where the Software makes
+use of such components, they are supplied by you from your own host system and
+are governed by Hailo's terms, not these.
+
+--------------------------------------------------------------------------------
+6. NO WARRANTY
+--------------------------------------------------------------------------------
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT.
+
+This is a pre-1.0 release. It is incomplete, has known gaps documented in the
+accompanying README, and has not been audited for security. Do not expose it
+directly to the public internet. Do not rely on it as the only copy of
+irreplaceable photographs.
+
+--------------------------------------------------------------------------------
+7. LIMITATION OF LIABILITY
+--------------------------------------------------------------------------------
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL LICENSOR BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. THIS INCLUDES, WITHOUT
+LIMITATION, LOSS OF DATA, LOSS OF PHOTOGRAPHS, LOSS OF PROFITS, AND BUSINESS
+INTERRUPTION, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Nothing in this Agreement excludes or limits liability that cannot be excluded
+or limited under applicable law.
+
+--------------------------------------------------------------------------------
+8. THE CONFIGURATION FILES
+--------------------------------------------------------------------------------
+
+The Configuration Files published in the photog-docker repository — the Docker
+Compose files, nginx.conf, install.sh, scripts/ and docs/ — are licensed to you
+under the MIT Licence:
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of these files and associated documentation files, to deal in them without
+  restriction, including without limitation the rights to use, copy, modify,
+  merge, publish, distribute, sublicense, and/or sell copies, and to permit
+  persons to whom they are furnished to do so, subject to the following
+  conditions: the above copyright notice and this permission notice shall be
+  included in all copies or substantial portions of the files. THE FILES ARE
+  PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+
+Adapt them freely. They describe how to run the Software; they are not the
+Software.
+
+--------------------------------------------------------------------------------
+9. TERM AND TERMINATION
+--------------------------------------------------------------------------------
+
+This Agreement takes effect when you first download or run the Software and
+continues until terminated. It terminates automatically if you breach any of its
+terms. On termination you must stop using the Software and destroy all copies of
+it. Your own data is unaffected — it is yours and remains on your hardware.
+
+Sections 4, 6, 7 and 10 survive termination.
+
+--------------------------------------------------------------------------------
+10. GENERAL
+--------------------------------------------------------------------------------
+
+This Agreement is the entire agreement between you and Licensor concerning the
+Software. If any provision is held unenforceable, the remainder stays in effect.
+Licensor's failure to enforce any provision is not a waiver of it.
+
+Licensor may publish revised terms with future releases. Revised terms apply to
+versions released after their publication; your licence to a version you have
+already obtained is governed by the terms shipped with it.
+
+Questions, or a request for terms other than these: open an issue at
+https://github.com/unsilo/photog-docker/issues
