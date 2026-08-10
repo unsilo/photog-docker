@@ -128,4 +128,20 @@ services:
       #
       # Filenames must match what the classifier rows ask for: yolov8m.hef,
       # yolov11m.hef, resnet_v1_50.hef.
-      - ${PHOTOG_MODELS_PATH:?set PHOTOG_MODELS_PATH to a host directory holding your .hef files}:/app_cache/models:ro
+      # NOT read-only, and that is deliberate rather than sloppy.
+      #
+      # This path is shared. The app derives the bumblebee/HuggingFace cache
+      # from PHOTOG_CACHE as `$PHOTOG_CACHE/models`, which is the same
+      # directory the HEFs are read from — so a bumblebee classifier downloads
+      # into `models/huggingface/` here. Mounted `:ro`, enabling one fails to
+      # write its cache, and the error points at HuggingFace rather than at a
+      # mount.
+      #
+      # Consequence worth knowing: your HEF directory will grow a
+      # `huggingface/` subdirectory of downloaded model weights. Untidy, and
+      # persistent, which is the right trade — they survive `down -v` along
+      # with the HEFs instead of being re-downloaded.
+      #
+      # The directory must be writable by uid 1000, the same rule as the
+      # warehouse.
+      - ${PHOTOG_MODELS_PATH:?set PHOTOG_MODELS_PATH to a host directory holding your .hef files}:/app_cache/models

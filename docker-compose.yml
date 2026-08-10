@@ -24,7 +24,31 @@ services:
       # parent. Mount the old path and Docker quietly creates an anonymous
       # volume for the real data directory: the named volume stays empty and the
       # database is gone the next time the container is recreated.
-      - photog-db:/var/lib/postgresql
+      #
+      # Defaults to the named volume. Set PHOTOG_DB_PATH to a directory and the
+      # database lives on your own filesystem instead, where `down -v` cannot
+      # reach it — Compose treats a value containing a slash as a bind mount.
+      #
+      # This is as safe as the named volume ON A LOCAL POSIX FILESYSTEM
+      # (ext4/xfs/btrfs), because a named volume is itself just a directory
+      # under /var/lib/docker on one. It is NOT safe on NFS, SMB/CIFS, exFAT,
+      # FAT32 or NTFS-via-FUSE: Postgres needs real POSIX ownership and honest
+      # fsync, and network filesystems in particular risk corruption rather than
+      # a clean failure. install.sh checks the filesystem type and declines to
+      # set this if it looks unsuitable.
+      #
+      # Ownership is NOT yours to set here, unlike every other path in this
+      # file. The postgres image starts as root, chowns PGDATA to its own uid
+      # (999) and re-execs — so create the directory and leave it alone. A
+      # `chown 1000` here would be actively wrong.
+      #
+      # PGDATA is the `18/docker` subdirectory of whatever you mount, which
+      # conveniently means a mount point's own lost+found does not upset initdb.
+      #
+      # Not a substitute for `pg_dump`: a raw data directory is readable only by
+      # the major version that wrote it, so this survives `down -v` but not a
+      # Postgres 19 upgrade. See docs/upgrading.md.
+      - ${PHOTOG_DB_PATH:-photog-db}:/var/lib/postgresql
     # The 64MB default gets tight once the gallery starts running the sorts and
     # hash joins behind tag and album queries.
     shm_size: 256mb

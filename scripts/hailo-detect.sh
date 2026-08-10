@@ -33,6 +33,7 @@ warn() { printf '\033[1;33mwarn\033[0m  %s\n' "$*"; }
 info() { printf '      %s\n' "$*"; }
 
 FAILED=0
+DEVICE_ARCH_HINT=""
 HAILO_GID=""
 HAILO_DEVICE=""
 HAILO_PYTHON_PACKAGE=""
@@ -102,6 +103,12 @@ if command -v hailortcli >/dev/null 2>&1; then
   ver="$(hailortcli --version 2>/dev/null | head -1)"
   ok "hailortcli: ${ver}"
   ident="$(hailortcli fw-control identify 2>&1 | grep -iE 'Device Architecture|Board Name' | head -2)"
+  # Which chip, for the captioning advice at the end: qwen2 needs a Hailo-10H,
+  # so a Hailo-8 owner has to be told about the CPU path or they get nothing.
+  case "$ident" in
+    *HAILO10H*|*HAILO15H*) DEVICE_ARCH_HINT="hailo10" ;;
+    *HAILO8*)              DEVICE_ARCH_HINT="hailo8" ;;
+  esac
   if [[ -n "$ident" ]]; then
     while IFS= read -r l; do ok "${l#"${l%%[![:space:]]*}"}"; done <<< "$ident"
   else
@@ -251,6 +258,25 @@ echo "Add to .env:"
 echo
 echo "$block" | sed 's/^/    /'
 echo
+
+# COMPOSE_FILE is deliberately NOT part of the appended block: it is one line
+# that must not appear twice, and only the operator knows whether captioning is
+# wanted. Advice, not automation.
+if [[ -f .env ]] && grep -qE '^COMPOSE_FILE=.*docker-compose\.hailo\.yml' .env; then
+  ok "COMPOSE_FILE in .env already includes the hailo overlay"
+else
+  echo "Also set COMPOSE_FILE in .env, so no -f flags are needed:"
+  echo
+  echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml"
+  echo
+  if [[ "$DEVICE_ARCH_HINT" == "hailo8" ]]; then
+    echo "  This looks like a Hailo-8. qwen2 captioning needs a Hailo-10H, so for"
+    echo "  captions add the CPU path and set PHOTOG_PYTHON_TAG:"
+    echo
+    echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml:docker-compose.moondream.yml"
+    echo
+  fi
+fi
 
 if [[ "$APPEND" == "1" ]]; then
   if [[ ! -f .env ]]; then

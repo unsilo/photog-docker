@@ -213,14 +213,17 @@ cd ~/photog
 docker compose -f docker-compose.yml -f docker-compose.hailo.yml up -d
 ```
 
-You need both `-f` flags every time, including for `logs`, `pull` and `down`. To
-avoid typing them, set it once per shell:
+Rather than passing both flags to every `logs`, `pull` and `down`, put it in
+`.env` — Compose reads `COMPOSE_FILE` from there and applies it to every
+command:
 
-```bash
-export COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml
+```
+COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml
 ```
 
-or add that line to `~/.bashrc`.
+Then plain `docker compose up -d` and `docker compose logs -f photog` do the
+right thing. `hailo-detect.sh` prints the line to use. Add
+`:docker-compose.moondream.yml` if you also want CPU captioning.
 
 Check the bindings actually loaded:
 
@@ -448,6 +451,70 @@ Check the HEF's architecture and SDK version (step 3 above). Confirm the
 classifier row's `model_repo` names the file you actually installed. If the
 labels look shifted rather than random, suspect a 1001-class model against a
 1000-class label list.
+
+---
+
+## Captioning on a Hailo-8 — use Moondream
+
+`qwen2` needs a Hailo-10H. There is no version of HailoRT, no HEF and no
+configuration that makes it run on a Hailo-8: the GenAI stack and the models it
+loads are Hailo-10H builds. Do not run `upgrade-hailort.sh` hoping to get there
+— it refuses on a Hailo-8, and rightly.
+
+**Moondream is the answer on that hardware.** It is a 0.5B int8 model running on
+the Pi's CPU, entirely independent of the accelerator, so your Hailo-8 keeps
+doing detection and classification while the CPU does captions.
+
+It needs the `-python` image, because its Python environment is ~1 GB and the
+default image deletes it at build time:
+
+```bash
+cd ~/photog
+```
+
+```
+PHOTOG_PYTHON_TAG=0.1.1-python
+```
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.hailo.yml \
+  -f docker-compose.moondream.yml up -d
+```
+
+Then enable **moondream** at `/classifier` — not qwen2.
+
+First caption after a fresh start is slow and that is expected: it downloads the
+weights from Hugging Face and loads the model. The log narrates it:
+
+```
+MoondreamServer: starting Python environment and loading model
+MoondreamServer: model ready
+```
+
+The overlay sets `HF_HOME=/app_cache/huggingface` so the weights land on a
+volume. Without that they go under `$HOME` on the container's writable layer and
+are re-downloaded every time the container is recreated — which presents as a
+mysteriously slow first caption after every `up -d`.
+
+### If Moondream fails with `:enoent` and `{:spawn_executable, nil}`
+
+You are on the default image, not the `-python` one. Snex looked for its
+interpreter at
+
+```
+/app/snex/projects/Elixir.PhoTog.Classifications.MoondreamInterpreter/venv/bin
+```
+
+found nothing, and passed `nil` to `open_port`. Confirm and fix:
+
+```bash
+docker compose exec photog ls -la /app/snex     # "no such file" = wrong image
+```
+
+`PHOTOG_PYTHON` is unrelated — that points the *Hailo* workers at an
+interpreter. Moondream manages its own.
 
 ---
 

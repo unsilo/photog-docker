@@ -93,6 +93,12 @@ anything.
 
 ### Database
 
+**`PHOTOG_DB_PATH` is not a backup.** Putting the database on your own
+filesystem protects it from `docker compose down -v`, and from nothing else. A
+raw Postgres data directory can only be read by the major version that wrote
+it, so it does not survive a Postgres 19 upgrade, a corrupted page, or a
+deleted directory. Take dumps regardless:
+
 ```bash
 cd ~/photog
 docker compose exec -T db pg_dump -U photog -Fc pho_tog_prod > photog-db-$(date +%F).dump

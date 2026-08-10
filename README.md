@@ -72,8 +72,77 @@ fails on a config path that is not a file.
 | RAM | 2 GB works. 4 GB or more is comfortable. |
 | Ports | 80 (change with `PHOTOG_HTTP_PORT`) |
 
-A Raspberry Pi 5 with an SSD is the machine this was built for. A Pi 4 works;
-imports are slower.
+### The reference deployment
+
+**A Raspberry Pi 5 booting from an NVMe drive.** That is the machine this is
+built and tested for, and it is the configuration to copy if you have no reason
+to do otherwise. Booting from NVMe puts `/var/lib/docker`, the database, the
+photo library and the thumbnail cache all on fast storage without any of them
+needing special handling.
+
+A Pi 4 works. A Pi 5 on an SD card works and will be slow at import time, and
+the SD card is where the wear from thumbnailing and Postgres WAL lands.
+
+**If you want an accelerator as well, check the PCIe budget first.** A Pi 5 has
+**one** PCIe lane. The AI HAT+ and AI HAT+ 2 occupy it, and so does an NVMe HAT
+— you cannot simply stack both. Combining them needs a dual-M.2 carrier with a
+PCIe switch, and every one currently sold advertises Hailo-8/8L support rather
+than Hailo-10H:
+
+- [Seeed PCIe 3.0 dual M.2 HAT](https://www.seeedstudio.com/PCIe3-0-to-dual-M-2-hat-for-Raspberry-Pi-5-p-6358.html)
+- [Seeed PCIe 2.0 dual M.2 HAT](https://www.seeedstudio.com/PCIe-to-dual-M-2-hat-for-Raspberry-Pi-5-p-5973.html)
+- [SunFounder dual NVMe Raft](https://www.amazon.com/SunFounder-Raspberry-Hailo-8L-Accelerator-Compatible/dp/B0FC27KH3X)
+
+Both devices then share the one lane. That is fine for inference — a 640×640
+frame is about 1.2 MB and results are tiny — but it is shared with every
+database write and thumbnail read, so use the Gen 3 board if you are buying one.
+
+**The way round it is USB.** A Hailo-10H on the AI HAT+ 2 using the PCIe lane,
+with an NVMe drive in a USB 3 enclosure, gets you both without a switch card.
+Pi 5 USB 3 is well clear of anything PhoTog does — the accelerator's PCIe
+traffic and the disk are on separate buses entirely. This is a supported and
+recommended configuration.
+
+Two things to get right if you go that way, because the failure mode is a drive
+that drops off mid-write, and that corrupts databases:
+
+- **Use a 5 V/5 A supply.** The official 27 W one. A Pi 5 on a lesser supply
+  limits total USB current, and an NVMe enclosure can exceed that on write
+  bursts. Check with `vcgencmd get_config usb_max_current_enable` and look for
+  `Under-voltage` in `dmesg`.
+- **Use a UASP-capable enclosure**, and check for known-bad USB bridges. Some
+  JMicron and ASMedia chipsets need a `usb-storage.quirks=VID:PID:u` kernel
+  argument on a Pi and will otherwise hang or corrupt data under sustained
+  write. `lsusb -t` will tell you whether you got `uas` or plain
+  `usb-storage`.
+
+**The other way round it is a 2-channel PCIe FFC adapter** — a Gen 2 switch
+that fans the Pi's single lane into two FFC connectors, so an AI HAT and an
+NVMe HAT each keep their native connector. This is the only option that puts a
+*HAT-format* accelerator and PCIe storage on the same Pi; the dual-M.2 carriers
+above only take M.2 modules, and the AI HAT+ 2's Hailo-10H is not removable.
+
+It buys capacity and a tidier box rather than speed — Gen 2 shared is about the
+same as USB 3, and storage is not the bottleneck here anyway. Three things to
+check before committing to it:
+
+- **Bench-test that both devices enumerate** before any case work.
+  `lspci -nn` should list both, and `sudo lspci -vv | grep -i lnksta` should
+  show 5GT/s. Switches on the Pi 5 mostly work and occasionally do not.
+- **Leave `dtparam=pciex1_gen=3` off.** The switch is Gen 2; forcing Gen 3
+  upstream of it manufactures instability.
+- **Mind the 5 V rail and the physical stack.** Two devices on one supply, and
+  adapter + AI HAT + NVMe HAT is tall — it does not fit every case.
+
+Five configurations, then:
+
+| | Storage | Accelerator |
+|---|---|---|
+| Baseline | NVMe boot (PCIe) | none |
+| **Recommended with AI** | **NVMe over USB 3** | **Hailo-10H, AI HAT+ 2 on PCIe** |
+| Tidiest with AI | NVMe HAT (PCIe, 2-ch FFC switch) | Hailo-10H, AI HAT+ 2 on the same switch |
+| Alternative | NVMe (PCIe, dual-M.2 switch) | Hailo-8/8L M.2 on the same switch |
+| Not advised | SD card | either |
 
 ### arm64 only, for now
 
@@ -153,27 +222,103 @@ about it.
 
 ---
 
-## Where things live
+## Which image, which overlays
 
-| | |
+Two images are published from the same source. The difference is what's
+bundled, not which chip you have.
+
+| Tag | Contains | Use it when |
+|---|---|---|
+| `:0.1.1`, `:latest` | the application | anything except CPU captioning |
+| `:0.1.1-python` | + the ~1 GB Python environment for Moondream | you want captions without a Hailo-10H |
+
+Overlays layer on top of `docker-compose.yml` and compose with each other:
+
+| Your machine | Command |
 |---|---|
-| `~/photog/import` | drop photos here to import them |
-| `~/photog/.env` | your configuration and credentials — back this up |
-| `photog-warehouse` volume | originals and thumbnails. Point it at a real disk with `PHOTOG_WAREHOUSE_PATH`. |
-| `photog-db` volume | the database |
-| `photog-cache` volume | upload staging and downloaded models |
+| No accelerator | `-f docker-compose.yml` |
+| No accelerator, want captions | `-f docker-compose.yml -f docker-compose.moondream.yml` |
+| Hailo-8 (AI HAT+) | `-f docker-compose.yml -f docker-compose.hailo.yml` |
+| Hailo-8, want captions | `… -f docker-compose.hailo.yml -f docker-compose.moondream.yml` |
+| Hailo-10H (AI HAT+ 2) | `-f docker-compose.yml -f docker-compose.hailo.yml` |
 
-A named volume lives under `/var/lib/docker` — on a Pi, that is the SD card.
-Before you import a library of any size, set `PHOTOG_WAREHOUSE_PATH` to a
-mounted disk:
+**Captioning splits by hardware.** `qwen2` runs on the accelerator but needs a
+**Hailo-10H and HailoRT 5.3.0** — it cannot work on a Hailo-8. `moondream` is a
+0.5B model that runs on the CPU, needs no accelerator at all, and is the only
+captioning option for everything else. It is not in the default image because
+its Python environment is about a gigabyte.
 
-```bash
-sudo mkdir -p /mnt/photos && sudo chown 1000:1000 /mnt/photos
+There is deliberately **no separate Hailo-8 compose file**. A Hailo-8 needs
+nothing structurally different — `docker-compose.hailo.yml` takes the device
+node, group id, host bindings and model directory as variables, and
+`scripts/hailo-detect.sh` fills in whichever generation is installed. Layer
+`moondream` on top for captions.
+
+**Don't type those flags every time.** Compose reads `COMPOSE_FILE` from `.env`,
+so set it once and every command — `up`, `logs`, `pull`, `exec`, `down` — picks
+up the right files with no flags at all:
+
+```
+COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml:docker-compose.moondream.yml
 ```
 
-The `1000:1000` matters: the container runs as uid 1000 and cannot write a
-root-owned directory. Getting it wrong shows up as thumbnails that never appear,
-not as an error at startup.
+```bash
+docker compose up -d          # uses all three
+docker compose logs -f photog
+```
+
+`install.sh` writes the base value; add overlays to it as you enable them.
+Passing `-f` explicitly still overrides, so the longhand in these docs keeps
+working.
+
+---
+
+## Where things live
+
+The installer asks where your data should go and creates it. Default layout:
+
+```
+~/photog/                 the install — compose files, nginx.conf, .env
+~/photog-data/
+  warehouse/              originals and thumbnails — THE thing to back up
+  import/                 drop photos here to import them
+  models/                 AI model files (and the bumblebee download cache)
+  db/                     the database, out of reach of `down -v`
+```
+
+Answer the installer's question with `/mnt/photos` (or wherever your disk is
+mounted) and all three land there instead. Config and data stay separate on
+purpose: you can delete and reinstall `~/photog` without touching photos.
+
+Only `photog-cache` — upload staging and downloaded models, all rebuildable —
+stays in a Docker named volume.
+
+The database goes in `db/` so that `docker compose down -v` cannot delete it.
+That is as safe as a named volume on a local ext4/xfs/btrfs disk, since a named
+volume is itself just a directory on one; the installer checks the filesystem
+and falls back to a named volume on anything that can't hold a database safely
+(NFS, SMB, exFAT). **It is still not a backup** — a raw data directory is
+readable only by the Postgres major version that wrote it. Keep taking
+`pg_dump`, see [docs/upgrading.md](docs/upgrading.md).
+
+**Back up `~/photog/.env`.** It holds your credentials, and losing
+`POSTGRES_PASSWORD` locks you out of your own database.
+
+If you set the paths by hand rather than using the installer, every directory
+must be owned by **uid 1000** — the container runs as that user and cannot write
+a directory it does not own:
+
+```bash
+sudo mkdir -p /mnt/photos/{warehouse,import,models}
+sudo chown -R 1000:1000 /mnt/photos
+```
+
+Getting that wrong is quiet: thumbnails never appear, or the import folder shows
+up empty. Nothing fails at startup.
+
+**With no `PHOTOG_WAREHOUSE_PATH` set at all**, the library goes into a named
+volume under `/var/lib/docker` — the SD card on a Pi, and somewhere nobody
+thinks to back up. Set it before importing anything.
 
 ---
 
@@ -230,8 +375,10 @@ Listed because you will hit them, not as an apology.
   creating an empty import record.
 - **Hailo in Docker is unverified.** See above and
   [docs/hailo.md](docs/hailo.md).
-- **The `moondream` and `qwen2` classifiers are not usable in this image.** They
-  need a Python environment and model files that are not shipped.
+- **Captioning needs either a Hailo-10H or the `-python` image.** `qwen2` is
+  Hailo-10H only and additionally needs HailoRT 5.3.0, which is newer than the
+  Raspberry Pi archive ships. `moondream` runs on the CPU but is only in the
+  `-python` variant. See the table above.
 - **Idle memory is higher than it should be.** The numerical runtime loads at
   boot whether or not any classifier is enabled.
 

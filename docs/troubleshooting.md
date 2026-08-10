@@ -295,6 +295,41 @@ form has to be reachable from inside the container.
 
 ---
 
+## A bumblebee classifier fails, complaining about `/app_cache/models/huggingface`
+
+The bumblebee (CPU) classifiers download their weights from HuggingFace at
+runtime, and the app puts that cache at **`$PHOTOG_CACHE/models`** — the same
+directory the Hailo HEFs are read from.
+
+If you use the Hailo overlay, that directory is a bind mount of
+`PHOTOG_MODELS_PATH`, so the download has to land in **your** models folder. Two
+things have to be true:
+
+```bash
+ls -ld /path/to/your/models        # must be writable by uid 1000
+sudo chown -R 1000:1000 /path/to/your/models
+```
+
+and the mount must not be read-only. Versions of `docker-compose.hailo.yml`
+before 2026-08-09 mounted it `:ro`, which makes this fail with a HuggingFace
+error that says nothing about mounts. Take the current file:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/unsilo/photog-docker/main/docker-compose.hailo.yml
+docker compose -f docker-compose.yml -f docker-compose.hailo.yml up -d
+```
+
+Expect a `huggingface/` subdirectory to appear alongside your `.hef` files. That
+is correct, if untidy — it means the weights persist across `down -v` instead of
+being re-downloaded.
+
+Note this is a different cache from Moondream's, which
+`docker-compose.moondream.yml` points at `/app_cache/huggingface` via `HF_HOME`.
+One is Elixir-side (bumblebee), the other Python-side (`hf_hub_download`), and
+they do not share.
+
+---
+
 ## It is very slow
 
 **First boot is slow on purpose** — migrations, seeding, and asset warm-up. Give

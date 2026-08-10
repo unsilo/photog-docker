@@ -8,6 +8,9 @@
 # inside a clone of this repo, these appear here.
 /import/
 /models/
+/warehouse/
+/db/
+/photog-data/
 *.hef
 
 # Database dumps and warehouse archives, per docs/upgrading.md.
