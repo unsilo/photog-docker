@@ -228,7 +228,7 @@ if [[ -d /usr/share/hailo-ollama/models/blob ]]; then
 fi
 
 info ""
-info "PhoTog's own HEFs are not at risk — they are on a host directory and are"
+info "Photog's own HEFs are not at risk — they are on a host directory and are"
 info "re-fetchable with scripts/download-models.sh."
 
 confirm "Proceed?"
@@ -240,7 +240,7 @@ confirm "Proceed?"
 # that cannot be released and a modprobe -r that will not complete.
 # ---------------------------------------------------------------------------
 if [[ -f "${COMPOSE_DIR}/docker-compose.yml" ]] && command -v docker >/dev/null 2>&1; then
-  log "Stopping PhoTog while the driver changes underneath it"
+  log "Stopping Photog while the driver changes underneath it"
   run docker compose -f "${COMPOSE_DIR}/docker-compose.yml" down
   info "volumes and photos are untouched by 'down'"
 else

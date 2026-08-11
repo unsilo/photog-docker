@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Organised by what you see. Run everything from your PhoTog directory
+Organised by what you see. Run everything from your Photog directory
 (`~/photog` by default).
 
 First two commands, always:
@@ -54,7 +54,7 @@ Something else owns port 80.
 sudo ss -ltnp | grep ':80 '
 ```
 
-Stop it, or move PhoTog:
+Stop it, or move Photog:
 
 ```
 PHOTOG_HTTP_PORT=8080
@@ -93,10 +93,10 @@ across subnets or VLANs.
 
 ## `no matching manifest for linux/amd64`
 
-The 0.1.0 image is published for **`linux/arm64` only** and this is an x86-64
+The image is published for **`linux/arm64` only** and this is an x86-64
 machine. Nothing is broken and nothing in `.env` will fix it.
 
-See "arm64 only, for now" in the README. Either run PhoTog on an arm64 machine —
+See "arm64 only, for now" in the README. Either run Photog on an arm64 machine —
 a Raspberry Pi, an Apple Silicon Mac, an arm64 VM — or wait for the amd64 image.
 
 Under emulation, if you want to try it anyway:
@@ -122,7 +122,7 @@ Same cause as above, one step later: the image was pulled for the wrong
 architecture and the binaries inside it will not run.
 
 ```bash
-docker image inspect tehsnappysoftware/photog:0.1.0 --format '{{.Architecture}}'
+docker image inspect tehsnappysoftware/photog:0.1.3 --format '{{.Architecture}}'
 uname -m
 ```
 
@@ -238,7 +238,7 @@ Open devtools, look at a broken image's URL, and compare it with what is in your
 address bar. Then set `PHOTOG_IMAGE_URL_BASE` to the address bar's origin,
 including the port if there is one.
 
-If the URL is right and the response is a 404 from PhoTog itself, the warehouse
+If the URL is right and the response is a 404 from Photog itself, the warehouse
 is the problem — see below.
 
 ---
@@ -324,7 +324,7 @@ is correct, if untidy — it means the weights persist across `down -v` instead 
 being re-downloaded.
 
 Note this is a different cache from Moondream's, which
-`docker-compose.moondream.yml` points at `/app_cache/huggingface` via `HF_HOME`.
+`docker-compose.python.yml` points at `/app_cache/huggingface` via `HF_HOME`.
 One is Elixir-side (bumblebee), the other Python-side (`hf_hub_download`), and
 they do not share.
 
@@ -363,7 +363,7 @@ the upload path, which covers anything reasonable. If uploads fail anyway:
 docker compose logs proxy | tail -50
 ```
 
-A `413` means something in front of PhoTog has a smaller limit than nginx does —
+A `413` means something in front of Photog has a smaller limit than nginx does —
 check your TLS terminator or router.
 
 ---

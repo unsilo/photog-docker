@@ -1,15 +1,15 @@
-PhoTog End User Licence Agreement
-Version 1.0 — applies to PhoTog 0.1.0 and later until superseded
+Photog End User Licence Agreement
+Version 1.0 — applies to Photog 0.1.0 and later until superseded
 
 Copyright (c) 2026 Steven Fuchs. All rights reserved.
 
-This is a licence to use the PhoTog software. It is not an open source licence.
+This is a licence to use the Photog software. It is not an open source licence.
 
 --------------------------------------------------------------------------------
 1. DEFINITIONS
 --------------------------------------------------------------------------------
 
-"Software" means the PhoTog application distributed as a container image from
+"Software" means the Photog application distributed as a container image from
 the tehsnappysoftware/photog repository on Docker Hub, including its
 documentation and any updates provided to you.
 

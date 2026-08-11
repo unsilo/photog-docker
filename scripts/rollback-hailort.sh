@@ -75,7 +75,7 @@ confirm "Roll back to the packages in ${BACKUP_DIR}?"
 
 # Nothing may hold /dev/hailo0 while the module is swapped.
 if [[ -f "${COMPOSE_DIR}/docker-compose.yml" ]] && command -v docker >/dev/null 2>&1; then
-  log "Stopping PhoTog"
+  log "Stopping Photog"
   run docker compose -f "${COMPOSE_DIR}/docker-compose.yml" down
 fi
 

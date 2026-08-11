@@ -16,7 +16,7 @@
 #
 # (4) is the one people miss. The bindings are a compiled extension built for
 # one CPython minor version, and this overlay runs them inside the container's
-# interpreter. Raspberry Pi OS Trixie and the PhoTog image are both on Python
+# interpreter. Raspberry Pi OS Trixie and the Photog image are both on Python
 # 3.13; Bookworm is on 3.11 and will not work this way. See docs/hailo.md.
 
 set -uo pipefail
@@ -25,7 +25,7 @@ APPEND=0
 [[ "${1:-}" == "--append" ]] && APPEND=1
 
 PY="${PHOTOG_PYTHON:-/usr/bin/python3}"
-IMAGE="tehsnappysoftware/photog:${PHOTOG_TAG:-0.1.2}"
+IMAGE="tehsnappysoftware/photog:${PHOTOG_TAG:-0.1.3}"
 
 ok()   { printf '\033[1;32m  ok\033[0m  %s\n' "$*"; }
 bad()  { printf '\033[1;31mfail\033[0m  %s\n' "$*"; FAILED=1; }
@@ -59,7 +59,7 @@ HAILORT_SONAME=""
 DEVICE_GLOBS_DOC='/dev/hailo[0-9]* /dev/h1x-[0-9]* /dev/hailo_chardev[0-9]*'
 
 echo
-echo "PhoTog — Hailo host detection"
+echo "Photog — Hailo host detection"
 echo "-----------------------------"
 
 # --- 1. the device ---------------------------------------------------------
@@ -291,8 +291,8 @@ else
     echo "  that runs on the CPU, independent of this accelerator, which keeps"
     echo "  doing detection and classification as normal:"
     echo
-    echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml:docker-compose.moondream.yml"
-    echo "    PHOTOG_PYTHON_TAG=0.1.2-python"
+    echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml:docker-compose.python.yml"
+    echo "    PHOTOG_PYTHON_TAG=0.1.3-python"
     echo
     echo "  Both lines are needed: the overlay selects the -python image, which"
     echo "  is the only one carrying Moondream's Python environment. Then enable"
@@ -304,7 +304,7 @@ fi
 
 if [[ "$APPEND" == "1" ]]; then
   if [[ ! -f .env ]]; then
-    echo "no .env in $(pwd) — run this from your PhoTog directory" >&2
+    echo "no .env in $(pwd) — run this from your Photog directory" >&2
     exit 1
   fi
   if grep -qE '^(HAILO_GID|HAILO_DEVICE)=' .env; then

@@ -185,7 +185,7 @@ of what the image contains.
 
 ```bash
 cd ~/projects/photog
-git tag -a v0.1.0 -m "PhoTog 0.1.0"
+git tag -a v0.1.0 -m "Photog 0.1.0"
 git push --tags
 ```
 
@@ -223,7 +223,7 @@ and no `.git` in any layer.
 | `PhoTog.Release.create_admin/2` recovery | `docs/troubleshooting.md`, `docs/configuration.md` | Function exists at `lib/pho_tog/release.ex:183`. Not run through `bin/pho_tog eval` in a container. |
 | The import folder works | `README.md`, `docker-compose.yml` | `PHOTOG_PHOTO_SOURCE=/import` is set and bind-mounted, but the app's default was `/home/photo/sample_photos` — a host path that has never existed in a container. Confirm the import screen actually starts there. |
 | `pg_dump`/`pg_restore` recipes | `docs/upgrading.md` | Standard Postgres, not run against this stack. |
-| Idle memory is "higher than it should be" | `README.md` | True per `claude/docker-web-image.md`; no number measured. Measure one and put it in the README — "PhoTog idles at N MB" is the question every self-hoster asks first. |
+| Idle memory is "higher than it should be" | `README.md` | True per `claude/docker-web-image.md`; no number measured. Measure one and put it in the README — "Photog idles at N MB" is the question every self-hoster asks first. |
 
 ---
 

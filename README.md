@@ -1,65 +1,106 @@
 # Photog
 
-Photog is a self hosted photo archiving and organizing app. 
-It will automatically organize your digital images by any means you like allowing you to search and organize your photos based on date, location, dminant color or any other data present in the exif info.
+Photog is a self-hosted photo archiving and organising app. It automatically
+organises your digital images and lets you search them by date, location,
+dominant colour, or anything else recorded in the EXIF data.
 
-Photog is great at organizing folders of photos but it really shines when coupled with our companion MacOS, iOS and tvOS apps. The MacOS app currently provides an archive function that lets you back up all of the photos in you Photo Library. The tvOS app lets you treat any album created to be shown as a slideshow. No cloud inoput needed, all from your local network.
+Photog is good at organising folders of photos, and it really shines alongside
+the companion macOS, iOS and tvOS apps. The macOS app archives everything in
+your Photos library. The tvOS app turns any album into a slideshow. No cloud
+account, no upload — all of it over your own local network.
 
-Phototog also incorporates AI classification either in software or accelerated using Hailo8 or Hailo10 AI Accelerator cards. Whether your photos are in you Photo Library, on a USB drive or on a dvd it organises them — albums, tags, ratings, smart albums, EXIF, thumbnails — and serves them over your own network. Nothing leaves the machine it runs on.
+Photog also does AI classification, either in software or accelerated by a
+Hailo-8 or Hailo-10H card. Whether your photos are in a Photos library, on a USB
+drive or on a DVD, it sorts them into albums, tags, ratings, smart albums, EXIF
+and thumbnails, and serves them on your own network. Nothing leaves the machine
+it runs on.
 
-The current best build path is using Docker Compose. The folllowing instructions were made to be work even if run from a fresh install of Debian Trixie.
+The supported way to run it is Docker Compose. What follows works from a fresh
+install of Debian Trixie or Raspberry Pi OS.
 
+---
+
+## What the AI features give you
+
+Photog does two separate AI jobs, and what you get depends on your hardware.
+**Classification** puts tags on photos — objects, scenes, subjects.
+**Descriptions** write a sentence or two about each photo.
+
+| Your hardware | Classification | Descriptions | `COMPOSE_FILE` |
+|---|---|---|---|
+| No accelerator | software — slow | unavailable | `docker-compose.yml` |
+| No accelerator | software — slow | software — slow *(moondream)* | `docker-compose.yml:docker-compose.python.yml` |
+| **Hailo-8** (AI HAT+) | **accelerated** | software — slow *(moondream)* | `docker-compose.yml:docker-compose.hailo.yml:docker-compose.python.yml` |
+| **Hailo-10H** (AI HAT+ 2) | **accelerated** | **accelerated** *(qwen2 — ~12 s/photo)* | `docker-compose.yml:docker-compose.hailo.yml` |
+
+Put that line in `.env` and every `docker compose` command picks it up — no `-f`
+flags to remember. The rows using `docker-compose.python.yml` also need
+`PHOTOG_PYTHON_TAG=0.1.3-python`, because software descriptions need a larger
+image that bundles a Python environment.
+
+Two things worth knowing before you choose:
+
+- **A Hailo-8 cannot do descriptions.** `qwen2` needs a Hailo-10H and HailoRT
+  5.3.0; there is no model, runtime version or setting that changes that. A
+  Hailo-8 still accelerates classification, and `moondream` on the CPU covers
+  descriptions.
+- **Everything else works with no accelerator at all** — import, albums, tags,
+  ratings, smart albums, the photo viewer, the native clients. The AI is an
+  addition, not a requirement, and every classifier ships disabled.
+
+---
 
 ## Quick start
 
-###Install Docker
+### 1. Install Docker
+
 ```bash
 curl -sSL https://get.docker.com | sh
 sudo usermod -aG docker $USER && newgrp docker
 ```
 
-If you want to use the AI features of Photog and have a Hailo8 or Hailo10 card you should install the software for it.
+### 2. Install the Hailo software — optional
 
-THe Hailo8 will speed up the image classification considerably but is not able to help with descriptions. THe Hailo10 helps both with calassification and descrpitions.
-###Install Hailo8 software(optional)
+Only if you have a card. Skip to step 3 otherwise.
+
+**Hailo-8 (AI HAT+)** — accelerates classification, cannot do descriptions:
+
 ```bash
-sudo apt-get install hailo-all
+sudo apt install hailo-all
+sudo reboot
 ```
 
-###Install Hailo10 software(optional)
+**Hailo-10H (AI HAT+ 2)** — accelerates both:
+
 ```bash
-sudo apt-get install hailo-10-all
+sudo apt install hailo-h10-all
+sudo reboot
 ```
 
-###Install photog
-Enter the following bash command and answer the prompts it give you. 
-```bash
+After the reboot, check the card is alive before going further:
 
+```bash
+hailortcli fw-control identify
+```
+
+That should print the device architecture. If it doesn't, fix it now — see
+[docs/hailo.md](docs/hailo.md). Nothing in a container can install a kernel
+driver for you.
+
+### 3. Install Photog
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/unsilo/photog-docker/main/install.sh | bash
-
-dont start***
-
-cd photog
-docker compose -f docker-compose.yml -f docker-compose.hailo.yml pull
-
-
 ```
 
-That creates `~/photog`, fetches the compose files, generates the secrets, asks
-for an admin email and password, and brings the stack up. When it finishes it
-prints the URL.
+Answer the prompts: where your photos should live, and an admin email and
+password.
 
-If you are using he Hailo cards run 
+That creates `~/photog`, fetches the compose files, creates your data
+directories and generates the secrets. **It does not start anything** — it
+finishes by printing the exact command to run next.
 
-```bash
-
-cd photog
-./scripts/hailo-detect.sh
-```
-
-take the output and paste it into the file at .env
-
-Prefer to read the script first:
+Prefer to read the script first? You should:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/unsilo/photog-docker/main/install.sh
@@ -67,7 +108,46 @@ less install.sh
 bash install.sh
 ```
 
-Or do it by hand — four files, four values:
+### 4. Set up the accelerator — Hailo only
+
+```bash
+cd ~/photog
+./scripts/hailo-detect.sh --append   # writes the device settings into .env
+./scripts/download-models.sh         # fetches the .hef model files
+```
+
+`hailo-detect.sh` inspects the card and writes the device node, group id and
+library paths into `.env` — none of which can be known before the hardware is
+looked at. It also prints the `COMPOSE_FILE` line for your card, including the
+description options.
+
+### 5. Choose your features
+
+Edit `.env` and set `COMPOSE_FILE` from the table above. For a Hailo-10H:
+
+```
+COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml
+```
+
+### 6. Start it
+
+```bash
+cd ~/photog
+docker compose up -d
+```
+
+First start pulls 1–2 GB and then runs database migrations. Give it a few
+minutes on a Pi before deciding it is stuck; `docker compose logs -f photog`
+shows what it is doing.
+
+Then open `http://<PHX_HOST>` — `http://photog.local` by default — and log in
+with the admin email and password from `.env`.
+
+Turn classifiers on at `/classifier`. They all ship disabled.
+
+---
+
+### Doing it by hand
 
 ```bash
 mkdir -p ~/photog/import && cd ~/photog
@@ -83,9 +163,6 @@ chmod 600 .env
 docker compose up -d
 ```
 
-Then open `http://<PHX_HOST>` and log in with `PHOTOG_ADMIN_EMAIL` /
-`PHOTOG_ADMIN_PASSWORD`.
-
 **`nginx.conf` is not optional.** The compose file bind-mounts it, and Docker
 creates a *directory* at a bind-mount source that does not exist — nginx then
 fails on a config path that is not a file.
@@ -96,115 +173,100 @@ fails on a config path that is not a file.
 
 | | |
 |---|---|
-| CPU | **arm64 only in 0.1.0** — see below |
+| CPU | **arm64 only in 0.1.x** — see below |
 | OS | 64-bit Linux. On a Raspberry Pi that means the **64-bit** build of Raspberry Pi OS; a 32-bit userland cannot run this image. |
-| Docker | Engine 24+ with the Compose v2 plugin. `curl -fsSL https://get.docker.com \| sudo sh` |
-| Disk | ~3 GB for the images, plus whatever your photo library needs |
+| Docker | Engine 24+ with the Compose v2 plugin |
+| Disk | ~3 GB for the images, plus your photo library |
 | RAM | 2 GB works. 4 GB or more is comfortable. |
 | Ports | 80 (change with `PHOTOG_HTTP_PORT`) |
 
-A Raspberry Pi 5 with an SSD is the machine this was built for. A Pi 4 works;
-imports are slower.
+### The reference deployment
+
+**A Raspberry Pi 5 booting from an NVMe drive.** That is what this is built and
+tested on. Booting from NVMe puts `/var/lib/docker`, the database, the photo
+library and the thumbnail cache on fast storage without any of them needing
+special handling.
+
+A Pi 4 works. A Pi 5 on an SD card works and will be slow at import, and the SD
+card takes the wear from thumbnailing and Postgres.
+
+**If you want an accelerator too, mind the PCIe budget.** A Pi 5 has **one**
+PCIe lane, and the AI HAT+ and AI HAT+ 2 occupy it — as does an NVMe HAT. The
+straightforward answer is an NVMe drive in a **USB 3 enclosure** alongside the
+AI HAT: USB 3 is well clear of anything Photog does, and the two are on separate
+buses. That is a supported and recommended configuration.
+
+If you want both on PCIe, a 2-channel PCIe FFC adapter (a Gen 2 switch with two
+downstream FFC ports) lets each HAT keep its native connector. It buys capacity
+and a tidier box rather than speed. Bench-test that both devices enumerate
+(`lspci -nn`, then `lspci -vv | grep -i lnksta` for 5GT/s) before any case work,
+and leave `dtparam=pciex1_gen=3` off — the switch is Gen 2.
+
+| | Storage | Accelerator |
+|---|---|---|
+| Baseline | NVMe boot (PCIe) | none |
+| **Recommended with AI** | **NVMe over USB 3** | **Hailo-10H, AI HAT+ 2 on PCIe** |
+| Tidiest with AI | NVMe HAT (PCIe, 2-ch FFC switch) | Hailo-10H on the same switch |
+| Not advised | SD card | either |
 
 ### arm64 only, for now
 
-The 0.1.0 image is published for **`linux/arm64`** and nothing else. That covers:
+The image is published for **`linux/arm64`** and nothing else. That covers
+Raspberry Pi 4 and 5 on 64-bit Raspberry Pi OS, other arm64 boards and VMs,
+Apple Silicon Macs through Docker Desktop, and arm64 NAS hardware.
 
-- Raspberry Pi 5 and Pi 4 on 64-bit Raspberry Pi OS — the primary target
-- other arm64 single-board computers and arm64 VMs
-- Apple Silicon Macs (M1 and later) through Docker Desktop
-- arm64 NAS hardware
+It does **not** cover an x86-64 machine. `docker compose pull` there fails with
+`no matching manifest for linux/amd64`, which looks like a broken publish and is
+not. `linux/amd64` is a build-infrastructure problem rather than a code one —
+cross-building under emulation takes hours per attempt — and will arrive when
+the build moves to native runners.
 
-It does **not** cover an x86-64 machine — an Intel or AMD laptop, desktop,
-mini-PC or NAS. `docker compose pull` there fails with `no matching manifest for
-linux/amd64`, which looks like a broken publish and is not.
-
-`linux/amd64` is planned and is a build-infrastructure problem rather than a
-code one: the app is portable, but cross-building it under emulation takes hours
-per attempt. It will arrive when the build moves to native runners. Watch the
-releases page.
-
-Running it on x86 today is possible under emulation and not recommended — the
-numerical runtime is exactly the sort of code QEMU is worst at:
+Under emulation it is possible and not recommended; the numerical runtime is
+exactly what QEMU is worst at:
 
 ```bash
 docker run --privileged --rm tonistiigi/binfmt --install arm64
 # then add to .env:  DOCKER_DEFAULT_PLATFORM=linux/arm64
 ```
 
-Expect it to be slow enough that you will not want to keep it.
-
----
-
-## Pick your hardware
-
-### Stock Raspberry Pi, arm64 NAS, or Apple Silicon Mac — no accelerator
-
-The quick start above is the whole story. The AI classifiers appear in the UI
-and ship disabled; everything else — import, albums, tags, ratings, smart
-albums, the photo viewer, the native clients — works.
-
-### Raspberry Pi 5 + Hailo-8 (AI HAT+), or + Hailo-10H (AI HAT+ 2)
-
-Start with the quick start. Get PhoTog running on the CPU first and confirm you
-can log in and import a photo — an accelerator adds classification to a working
-install, it is not part of getting one.
-
-Then read **[docs/hailo.md](docs/hailo.md)**. The short version:
-
-1. Install the host packages (`hailo-all` for a Hailo-8, `hailo-h10-all` for a
-   Hailo-10H) and reboot. Nothing in a container can do this for you.
-2. Run `./scripts/hailo-detect.sh`, which checks the four things that have to
-   line up and prints the `.env` lines to paste.
-3. Set `PHOTOG_MODELS_PATH` in `.env`, then `./scripts/download-models.sh` —
-   it picks the right architecture and SDK version and verifies what it fetched.
-4. Bring the stack up with the overlay:
-   ```bash
-   docker compose -f docker-compose.yml -f docker-compose.hailo.yml up -d
-   ```
-5. Enable a classifier at `/classifier`.
-
-Captioning additionally needs **HailoRT 5.3.0**, which is newer than
-`apt install hailo-h10-all` gives you — `./scripts/upgrade-hailort.sh` handles
-that, with `./scripts/rollback-hailort.sh` to undo it.
-
-**Status:** detection and classification are confirmed working in Docker on a
-Raspberry Pi 5 + Hailo-10H. Captioning needs HailoRT 5.3.0, which is newer than
-the Raspberry Pi archive ships — see [docs/hailo.md](docs/hailo.md). The Hailo-8
-path is untested.
-
-The
-image ships no HailoRT python bindings — they are not on PyPI, and baking one
-version in would be wrong for every host running a different driver — so the
-overlay borrows the host's copy. That keeps driver, library and bindings in
-lockstep automatically, at the cost of requiring the host and the container to
-be on the same CPython minor version. Raspberry Pi OS **Trixie** matches the
-image; **Bookworm** does not. [docs/hailo.md](docs/hailo.md) explains what to do
-about it.
-
 ---
 
 ## Where things live
 
-| | |
-|---|---|
-| `~/photog/import` | drop photos here to import them |
-| `~/photog/.env` | your configuration and credentials — back this up |
-| `photog-warehouse` volume | originals and thumbnails. Point it at a real disk with `PHOTOG_WAREHOUSE_PATH`. |
-| `photog-db` volume | the database |
-| `photog-cache` volume | upload staging and downloaded models |
+The installer asks where your data should go and creates it. Default layout:
 
-A named volume lives under `/var/lib/docker` — on a Pi, that is the SD card.
-Before you import a library of any size, set `PHOTOG_WAREHOUSE_PATH` to a
-mounted disk:
-
-```bash
-sudo mkdir -p /mnt/photos && sudo chown 1000:1000 /mnt/photos
+```
+~/photog/                 the install — compose files, nginx.conf, .env
+~/photog-data/
+  warehouse/              originals and thumbnails — THE thing to back up
+  import/                 drop photos here to import them
+  models/                 AI model files (and the classifier download cache)
+  db/                     the database, out of reach of `down -v`
 ```
 
-The `1000:1000` matters: the container runs as uid 1000 and cannot write a
-root-owned directory. Getting it wrong shows up as thumbnails that never appear,
-not as an error at startup.
+Answer the installer with `/mnt/photos` and all four land there instead. Config
+and data stay separate on purpose: you can delete and reinstall `~/photog`
+without touching photos.
+
+Only `photog-cache` — upload staging and downloaded models, all rebuildable —
+remains a Docker named volume.
+
+**Back up `~/photog/.env`.** It holds your credentials, and losing
+`POSTGRES_PASSWORD` locks you out of your own database.
+
+Setting the paths by hand instead? Every directory except the database must be
+owned by **uid 1000** — the container runs as that user and cannot write a
+directory it does not own:
+
+```bash
+sudo mkdir -p /mnt/photos/{warehouse,import,models}
+sudo chown -R 1000:1000 /mnt/photos
+```
+
+Getting that wrong is quiet: thumbnails never appear, or the import folder shows
+up empty. Nothing fails at startup. The database directory is the exception —
+create it and leave its ownership alone, because the Postgres image manages that
+itself.
 
 ---
 
@@ -216,12 +278,15 @@ cd ~/photog
 docker compose logs -f photog          # what it is doing
 docker compose ps                      # what is running
 docker compose restart photog          # restart just the app
-docker compose down                    # stop (volumes survive)
+docker compose down                    # stop; your data survives
 docker compose pull && docker compose up -d    # upgrade
 ```
 
-`docker compose down -v` deletes the volumes, and with them your photos and
-database. There is no confirmation prompt.
+With `COMPOSE_FILE` set in `.env`, none of these need `-f` flags.
+
+`docker compose down -v` deletes the named volumes. With the installer's
+defaults your photos and database are on your own filesystem and survive it, but
+do not make a habit of it.
 
 ---
 
@@ -236,22 +301,21 @@ database. There is no confirmation prompt.
 
 ---
 
-## Known limitations in 0.1.0
+## Known limitations
 
 Listed because you will hit them, not as an apology.
 
 - **No email.** The mailer is not wired up, so password reset and self-service
   registration do not work. The admin account is created from `.env` on first
-  boot; that is the only way in. `PHOTOG_ALLOW_REGISTRATION` exists but needs a
-  mailer to be useful.
+  boot; that is the only way in.
 - **One library, not one per user.** There is no per-user ownership of photos,
   albums or tags. A second account is a second key to the same library.
-- **No HTTPS.** The proxy serves plain HTTP. Put PhoTog on a network you trust,
-  or terminate TLS in front of it (see
-  [docs/configuration.md](docs/configuration.md)).
-- **No authentication on `/media`.** Images are served by the endpoint before
-  the router runs, so no session check applies. Anyone who can reach the server
-  and guess a path can fetch an image.
+- **No HTTPS.** The proxy serves plain HTTP. Put Photog on a network you trust,
+  or terminate TLS in front of it — see
+  [docs/configuration.md](docs/configuration.md).
+- **No authentication on `/media`.** Images are served before the router runs,
+  so no session check applies. Anyone who can reach the server and guess a path
+  can fetch an image.
 - **The upload endpoint has no size limit of its own.** It is authenticated by a
   client token, but a request body is read whole into memory with no ceiling.
   The 1 GB cap in `nginx.conf` is the only thing bounding it — don't remove it,
@@ -259,10 +323,8 @@ Listed because you will hit them, not as an apology.
 - **Import fails noisily on a bad path.** Typing a directory that does not exist
   into the import form crashes the page instead of reporting the error, after
   creating an empty import record.
-- **Hailo in Docker is unverified.** See above and
-  [docs/hailo.md](docs/hailo.md).
-- **The `moondream` and `qwen2` classifiers are not usable in this image.** They
-  need a Python environment and model files that are not shipped.
+- **Descriptions in software are slow.** `moondream` runs a 0.5B model on the
+  CPU. It works; it is not quick.
 - **Idle memory is higher than it should be.** The numerical runtime loads at
   boot whether or not any classifier is enabled.
 
@@ -287,7 +349,7 @@ and, for anything Hailo-related, the full output of
 
 ## Licence
 
-PhoTog is free to run for personal, non-commercial use. The image is closed
+Photog is free to run for personal, non-commercial use. The image is closed
 source and may not be redistributed or reverse-engineered. See
 [LICENSE](LICENSE).
 

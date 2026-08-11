@@ -6,11 +6,11 @@
 > been.** If you want a working accelerator today rather than a working
 > experiment, this is not yet the way to get one.
 
-PhoTog can use a Hailo M.2 accelerator for object detection (YOLO), scene
+Photog can use a Hailo M.2 accelerator for object detection (YOLO), scene
 classification (ResNet-50) and, on a Hailo-10H, image captioning. Everything
 else works without one, and every classifier ships disabled.
 
-Get PhoTog running on the CPU first. An accelerator adds classification to a
+Get Photog running on the CPU first. An accelerator adds classification to a
 working install; it is not part of getting one.
 
 ---
@@ -68,7 +68,7 @@ above disappears for the container.
 extension built for one CPython minor version, and this runs them under the
 container's interpreter.
 
-| Host | Python | Works with the 0.1.0 image? |
+| Host | Python | Works with the published image? |
 |---|---|---|
 | Raspberry Pi OS **Trixie** | 3.13 | **yes** — matches the image |
 | Raspberry Pi OS **Bookworm** | 3.11 | **no** — import fails |
@@ -77,7 +77,7 @@ container's interpreter.
 `scripts/hailo-detect.sh` checks this for you.
 
 If you are on Bookworm, the options today are: upgrade the host to Trixie
-(which also moves you onto the current Hailo packages), or run PhoTog on bare
+(which also moves you onto the current Hailo packages), or run Photog on bare
 metal instead of in Docker. A future release will publish image variants with
 matching bindings baked in and tagged by HailoRT version — `:0.2.0-hailort4.20`
 and so on — which removes this constraint. It is not in 0.1.0.
@@ -134,7 +134,7 @@ That has been the entire fix twice.
 
 ### 2. Detect
 
-From your PhoTog directory:
+From your Photog directory:
 
 ```bash
 ./scripts/hailo-detect.sh
@@ -223,7 +223,7 @@ COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml
 
 Then plain `docker compose up -d` and `docker compose logs -f photog` do the
 right thing. `hailo-detect.sh` prints the line to use. Add
-`:docker-compose.moondream.yml` if you also want CPU captioning.
+`:docker-compose.python.yml` if you also want CPU captioning.
 
 Check the bindings actually loaded:
 
@@ -473,14 +473,14 @@ cd ~/photog
 ```
 
 ```
-PHOTOG_PYTHON_TAG=0.1.2-python
+PHOTOG_PYTHON_TAG=0.1.3-python
 ```
 
 ```bash
 docker compose \
   -f docker-compose.yml \
   -f docker-compose.hailo.yml \
-  -f docker-compose.moondream.yml up -d
+  -f docker-compose.python.yml up -d
 ```
 
 Then enable **moondream** at `/classifier` — not qwen2.
@@ -726,7 +726,7 @@ Two behaviours worth knowing before you point it at a library:
 
 ## Running on bare metal instead
 
-If the container path does not work for you, PhoTog also runs directly on the
+If the container path does not work for you, Photog also runs directly on the
 host — that is how it is developed, and it is the configuration the accelerator
 has actually been verified in. The image is what is published today; a bare
 metal distribution is not. If you need Hailo acceleration in 0.1.0 badly enough

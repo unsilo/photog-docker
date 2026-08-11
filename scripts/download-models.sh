@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Fetch the HEF model files PhoTog's classifiers need, verify them, and put them
+# Fetch the HEF model files Photog's classifiers need, verify them, and put them
 # where the container looks.
 #
 #   ./scripts/download-models.sh                    # auto-detect, all models

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# PhoTog installer. Fetches the compose files, generates the secrets, writes a
+# Photog installer. Fetches the compose files, generates the secrets, writes a
 # .env, and starts the stack.
 #
 #   curl -fsSL https://raw.githubusercontent.com/unsilo/photog-docker/main/install.sh | bash
@@ -16,7 +16,7 @@
 # Environment overrides:
 #   PHOTOG_DIR   install directory        (default ~/photog)
 #   PHOTOG_REF   git ref to fetch from    (default main)
-#   PHOTOG_TAG   image tag to run         (default 0.1.2)
+#   PHOTOG_TAG   image tag to run         (default 0.1.3)
 #   PHX_HOST     hostname to serve at     (default <hostname>.local, or localhost)
 #
 # It configures and then stops. It does not start the stack: on a machine with
@@ -29,7 +29,7 @@ set -euo pipefail
 
 PHOTOG_DIR="${PHOTOG_DIR:-$HOME/photog}"
 PHOTOG_REF="${PHOTOG_REF:-main}"
-PHOTOG_TAG="${PHOTOG_TAG:-0.1.2}"
+PHOTOG_TAG="${PHOTOG_TAG:-0.1.3}"
 RAW="https://raw.githubusercontent.com/unsilo/photog-docker/${PHOTOG_REF}"
 
 say()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
@@ -117,11 +117,11 @@ command -v openssl >/dev/null 2>&1 || die "openssl is required (apt install open
 
 case "$(uname -m)" in
   aarch64|arm64) ;;
-  armv7l|armv6l) die "32-bit ARM is not supported. PhoTog needs a 64-bit OS —
+  armv7l|armv6l) die "32-bit ARM is not supported. Photog needs a 64-bit OS —
   on a Raspberry Pi that means the 64-bit build of Raspberry Pi OS." ;;
   x86_64|amd64)
     if [[ -z "${ALLOW_EMULATION:-}" ]]; then
-      die "PhoTog ${PHOTOG_TAG} is published for linux/arm64 only, and this is an
+      die "Photog ${PHOTOG_TAG} is published for linux/arm64 only, and this is an
   x86-64 machine. 'docker compose pull' would fail with 'no matching
   manifest for linux/amd64'.
 
@@ -145,11 +145,25 @@ say "installing into ${PHOTOG_DIR}"
 mkdir -p "${PHOTOG_DIR}"
 cd "${PHOTOG_DIR}"
 
-for f in docker-compose.yml docker-compose.hailo.yml docker-compose.moondream.yml nginx.conf .env.example; do
+for f in docker-compose.yml docker-compose.hailo.yml docker-compose.python.yml nginx.conf .env.example; do
   say "fetching ${f}"
   curl -fsSL "${RAW}/${f}" -o "${f}.tmp" || die "could not fetch ${RAW}/${f}"
   mv "${f}.tmp" "${f}"
 done
+
+# docker-compose.moondream.yml was renamed to docker-compose.python.yml — the
+# overlay selects the `-python` image, and Moondream is one thing that image
+# happens to carry. Left in place the stale file is harmless until someone's
+# COMPOSE_FILE still names it, at which point they are running an overlay that
+# no longer receives fixes.
+if [[ -f docker-compose.moondream.yml ]]; then
+  rm -f docker-compose.moondream.yml
+  say "removed docker-compose.moondream.yml (renamed to docker-compose.python.yml)"
+  if [[ -f .env ]] && grep -q 'docker-compose\.moondream\.yml' .env; then
+    warn "your .env still names docker-compose.moondream.yml in COMPOSE_FILE."
+    warn "  Change it to docker-compose.python.yml before starting."
+  fi
+fi
 
 mkdir -p scripts
 for s in hailo-detect.sh download-models.sh upgrade-hailort.sh rollback-hailort.sh; do
@@ -199,7 +213,7 @@ else
   data_root="${PHOTOG_DATA_ROOT:-}"
   if [[ -z "$data_root" ]] && [[ -r /dev/tty ]]; then
     printf '\n'
-    echo "Where should PhoTog keep your photos?"
+    echo "Where should Photog keep your photos?"
     echo
     echo "  This holds the photo library, the import folder and any AI model"
     echo "  files. It should be on a disk with room to grow — on a Raspberry Pi"
@@ -279,8 +293,8 @@ else
 # Add overlays here rather than typing them each time:
 #
 #   Hailo accelerator      docker-compose.yml:docker-compose.hailo.yml
-#   CPU captioning         docker-compose.yml:docker-compose.moondream.yml
-#   both                   docker-compose.yml:docker-compose.hailo.yml:docker-compose.moondream.yml
+#   CPU captioning         docker-compose.yml:docker-compose.python.yml
+#   both                   docker-compose.yml:docker-compose.hailo.yml:docker-compose.python.yml
 #
 # The Hailo overlay also needs the values scripts/hailo-detect.sh prints, and
 # the moondream overlay needs PHOTOG_PYTHON_TAG. See .env.example.
@@ -384,8 +398,8 @@ else
   echo "  For image descriptions without an accelerator, add the CPU captioner"
   echo "  to COMPOSE_FILE in .env first:"
   echo
-  echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.moondream.yml"
-  echo "    PHOTOG_PYTHON_TAG=0.1.2-python"
+  echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.python.yml"
+  echo "    PHOTOG_PYTHON_TAG=0.1.3-python"
 fi
 
 import_dir="$(grep -E '^PHOTOG_IMPORT_PATH=' .env | head -1 | cut -d= -f2- || true)"

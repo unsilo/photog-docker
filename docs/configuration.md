@@ -205,7 +205,7 @@ the native clients will not connect.
 
 ### `PHOTOG_TAG`
 
-Image tag to run. `0.1.0` pins it; `latest` tracks the newest release.
+Image tag to run. `0.1.3` pins it; `latest` tracks the newest release.
 
 Pin it. It turns upgrading into a decision rather than a side effect of
 `docker compose pull`.
@@ -214,7 +214,7 @@ Pin it. It turns upgrading into a decision rather than a side effect of
 
 Self-service signup at `/users/register`. Off by default.
 
-Two things to know before turning it on. PhoTog has no per-user ownership of
+Two things to know before turning it on. Photog has no per-user ownership of
 photos, albums or tags — a second account is a second key to the same library,
 not a second library. And registration completes over a magic-link email that
 this container cannot send, so `true` on its own does not produce a working

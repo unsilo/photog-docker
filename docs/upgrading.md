@@ -44,7 +44,7 @@ untouched.
 ### Back out of an upgrade
 
 ```
-PHOTOG_TAG=0.1.0
+PHOTOG_TAG=0.1.3
 ```
 
 ```bash

@@ -1,4 +1,4 @@
-# PhoTog — the whole server, in one file.
+# Photog — the whole server, in one file.
 #
 #   1. put this file, nginx.conf and .env.example in the same directory
 #   2. cp .env.example .env   and fill in the four required values
@@ -108,7 +108,7 @@ services:
       PHOTOG_ADMIN_EMAIL: ${PHOTOG_ADMIN_EMAIL:-}
       PHOTOG_ADMIN_PASSWORD: ${PHOTOG_ADMIN_PASSWORD:-}
 
-      # Self-service signup, off by default. PhoTog has no per-user ownership of
+      # Self-service signup, off by default. Photog has no per-user ownership of
       # photos, albums or tags — a second account is a second key to the same
       # library, not a second library. See docs/configuration.md.
       PHOTOG_ALLOW_REGISTRATION: ${PHOTOG_ALLOW_REGISTRATION:-false}
