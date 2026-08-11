@@ -465,7 +465,7 @@ loads are Hailo-10H builds. Do not run `upgrade-hailort.sh` hoping to get there
 the Pi's CPU, entirely independent of the accelerator, so your Hailo-8 keeps
 doing detection and classification while the CPU does captions.
 
-It needs the `-python` image, because its Python environment is ~1 GB and the
+It needs the `-python` image, because its Python environment is ~350 MB and the
 default image deletes it at build time:
 
 ```bash
@@ -473,7 +473,7 @@ cd ~/photog
 ```
 
 ```
-PHOTOG_PYTHON_TAG=0.1.1-python
+PHOTOG_PYTHON_TAG=0.1.2-python
 ```
 
 ```bash

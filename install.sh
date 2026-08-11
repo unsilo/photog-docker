@@ -16,15 +16,20 @@
 # Environment overrides:
 #   PHOTOG_DIR   install directory        (default ~/photog)
 #   PHOTOG_REF   git ref to fetch from    (default main)
-#   PHOTOG_TAG   image tag to run         (default 0.1.0)
+#   PHOTOG_TAG   image tag to run         (default 0.1.2)
 #   PHX_HOST     hostname to serve at     (default <hostname>.local, or localhost)
-#   NO_START=1   write the files, do not start anything
+#
+# It configures and then stops. It does not start the stack: on a machine with
+# an accelerator, starting before scripts/hailo-detect.sh has run produces a
+# container with no device and an empty models directory, which looks like a
+# working install that cannot classify anything. The last thing it prints is
+# the exact command to run next.
 
 set -euo pipefail
 
 PHOTOG_DIR="${PHOTOG_DIR:-$HOME/photog}"
 PHOTOG_REF="${PHOTOG_REF:-main}"
-PHOTOG_TAG="${PHOTOG_TAG:-0.1.0}"
+PHOTOG_TAG="${PHOTOG_TAG:-0.1.2}"
 RAW="https://raw.githubusercontent.com/unsilo/photog-docker/${PHOTOG_REF}"
 
 say()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
@@ -317,48 +322,81 @@ PHX_HOST_EFFECTIVE="$(grep -E '^PHX_HOST=' .env | cut -d= -f2-)"
 PORT_EFFECTIVE="$(grep -E '^PHOTOG_HTTP_PORT=' .env | cut -d= -f2- || true)"
 PORT_EFFECTIVE="${PORT_EFFECTIVE:-80}"
 
-# --- start -----------------------------------------------------------------
+# --- what to do next -------------------------------------------------------
+#
+# This installer deliberately does NOT start the stack.
+#
+# Starting here would be wrong on any machine with an accelerator: COMPOSE_FILE
+# is `docker-compose.yml` at this point, so `up -d` would build a base-stack
+# container with no device, no HailoRT mounts and an empty models directory —
+# and then the real configuration would need `--force-recreate` to replace it.
+# The first thing the user sees would be an install that appears to work and
+# quietly cannot classify anything.
+#
+# Hailo setup also has to come first in the other direction: hailo-detect.sh
+# reads the device to write HAILO_DEVICE, HAILO_GID and the libhailort soname,
+# and none of that can be known before the hardware is inspected.
+#
+# So: configure, then hand over.
 
-if [[ -n "${NO_START:-}" ]]; then
-  say "NO_START set — files are in ${PHOTOG_DIR}, nothing started"
-  exit 0
-fi
-
+printf '\n'
 if [[ "$PORT_EFFECTIVE" == "80" ]] && ss -ltn 2>/dev/null | grep -qE ':80\s'; then
-  warn "something is already listening on port 80. If the proxy fails to start,
-       set PHOTOG_HTTP_PORT (and PHOTOG_IMAGE_URL_BASE) in .env — see .env.example."
-fi
-
-say "pulling images (first run downloads ~1-2GB and takes a while)"
-docker compose pull
-
-say "starting"
-docker compose up -d
-
-printf '\n'
-say "waiting for the app to become healthy"
-for _ in $(seq 1 60); do
-  state="$(docker compose ps --format '{{.Health}}' photog 2>/dev/null | head -1)"
-  [[ "$state" == "healthy" ]] && break
-  sleep 5
-done
-
-printf '\n'
-if [[ "${state:-}" == "healthy" ]]; then
-  url="http://${PHX_HOST_EFFECTIVE}"
-  [[ "$PORT_EFFECTIVE" != "80" ]] && url="${url}:${PORT_EFFECTIVE}"
-  say "PhoTog is up at ${url}"
-  say "log in with the admin email and password in ${PHOTOG_DIR}/.env"
+  warn "something is already listening on port 80. Set PHOTOG_HTTP_PORT (and
+       PHOTOG_IMAGE_URL_BASE) in .env before starting — see .env.example."
   printf '\n'
-  import_dir="$(grep -E '^PHOTOG_IMPORT_PATH=' .env | head -1 | cut -d= -f2- || true)"
-  echo "  photos to import   ->  ${import_dir:-${PHOTOG_DIR}/import}"
-  echo "  logs               ->  cd ${PHOTOG_DIR} && docker compose logs -f photog"
-  echo "  stop               ->  cd ${PHOTOG_DIR} && docker compose down"
-else
-  warn "the app has not reported healthy yet. First boot runs migrations and can
-       take a few minutes on a Pi. Watch it with:
-
-         cd ${PHOTOG_DIR} && docker compose logs -f photog
-
-       If it is stuck, see docs/troubleshooting.md."
 fi
+
+url="http://${PHX_HOST_EFFECTIVE}"
+[[ "$PORT_EFFECTIVE" != "80" ]] && url="${url}:${PORT_EFFECTIVE}"
+
+say "installed into ${PHOTOG_DIR} — nothing started yet"
+printf '\n'
+
+# Look for a Hailo without needing the detect script, so the next step can be
+# named specifically rather than offered as a menu.
+have_hailo=0
+shopt -s nullglob
+hailo_nodes=(/dev/hailo[0-9]* /dev/h1x-[0-9]*)
+shopt -u nullglob
+[[ ${#hailo_nodes[@]} -gt 0 ]] && have_hailo=1
+
+if [[ "$have_hailo" == "1" ]]; then
+  echo "  A Hailo accelerator is present (${hailo_nodes[0]}). Set it up before starting:"
+  echo
+  echo "    cd ${PHOTOG_DIR}"
+  echo "    ./scripts/hailo-detect.sh --append    # writes the device settings to .env"
+  echo "    ./scripts/download-models.sh          # fetches the .hef model files"
+  echo
+  echo "  Then add the overlay to COMPOSE_FILE in .env — hailo-detect.sh prints"
+  echo "  the exact line for your hardware, including the captioning options:"
+  echo
+  echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml"
+  echo
+  echo "  And start it:"
+  echo
+  echo "    docker compose up -d"
+else
+  echo "  No accelerator detected — nothing else to configure. Start it with:"
+  echo
+  echo "    cd ${PHOTOG_DIR}"
+  echo "    docker compose up -d"
+  echo
+  echo "  For image descriptions without an accelerator, add the CPU captioner"
+  echo "  to COMPOSE_FILE in .env first:"
+  echo
+  echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.moondream.yml"
+  echo "    PHOTOG_PYTHON_TAG=0.1.2-python"
+fi
+
+import_dir="$(grep -E '^PHOTOG_IMPORT_PATH=' .env | head -1 | cut -d= -f2- || true)"
+
+printf '\n'
+echo "  First start pulls ~1-2GB and then runs migrations; give it a few minutes"
+echo "  on a Pi before deciding it is stuck."
+printf '\n'
+echo "  then                 ${url}"
+echo "  log in with          the admin email and password in ${PHOTOG_DIR}/.env"
+echo "  photos to import ->  ${import_dir:-${PHOTOG_DIR}/import}"
+echo "  logs             ->  cd ${PHOTOG_DIR} && docker compose logs -f photog"
+echo "  stop             ->  cd ${PHOTOG_DIR} && docker compose down"
+printf '\n'

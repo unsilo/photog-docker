@@ -9,7 +9,7 @@
 # machine with no accelerator at all, it cannot work — so Moondream is the only
 # captioning path those machines have.
 #
-# Moondream runs on the CPU through a Python environment (Snex), which is ~1GB
+# Moondream runs on the CPU through a Python environment (Snex), which is ~350MB
 # and is therefore NOT in the default image. This overlay switches to the
 # `-python` variant, which is the same application with that environment kept.
 #
@@ -28,7 +28,7 @@ services:
     # Same version, `-python` variant. Overrides the base file's image outright,
     # so PHOTOG_TAG does not apply here — set PHOTOG_PYTHON_TAG instead, and
     # keep the two in step when you upgrade.
-    image: tehsnappysoftware/photog:${PHOTOG_PYTHON_TAG:-0.1.1-python}
+    image: tehsnappysoftware/photog:${PHOTOG_PYTHON_TAG:-0.1.2-python}
 
     environment:
       # Moondream fetches its weights at runtime with `hf_hub_download`

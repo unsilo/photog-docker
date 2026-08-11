@@ -25,7 +25,7 @@ APPEND=0
 [[ "${1:-}" == "--append" ]] && APPEND=1
 
 PY="${PHOTOG_PYTHON:-/usr/bin/python3}"
-IMAGE="tehsnappysoftware/photog:${PHOTOG_TAG:-0.1.0}"
+IMAGE="tehsnappysoftware/photog:${PHOTOG_TAG:-0.1.2}"
 
 ok()   { printf '\033[1;32m  ok\033[0m  %s\n' "$*"; }
 bad()  { printf '\033[1;31mfail\033[0m  %s\n' "$*"; FAILED=1; }
@@ -242,15 +242,25 @@ if [[ -z "$HAILO_GID$HAILO_PYTHON_PACKAGE$HAILORT_LIB" ]]; then
   exit 1
 fi
 
+# install.sh writes PHOTOG_MODELS_PATH, so mentioning it again is noise in the
+# common case — and a second commented copy in .env is worse than noise, since
+# whoever uncomments the wrong one gets a models directory that is not the one
+# the installer created. Only offer it when it is genuinely absent.
+models_hint=""
+if [[ ! -f .env ]] || ! grep -qE '^PHOTOG_MODELS_PATH=' .env; then
+  models_hint="
+# Not set anywhere yet, and the hailo overlay requires it. A host directory to
+# hold your .hef files — scripts/download-models.sh fills it:
+#PHOTOG_MODELS_PATH=${HOME}/photog-data/models"
+fi
+
 block="$(cat <<ENVEOF
 # --- Hailo, detected by scripts/hailo-detect.sh on $(date -u '+%Y-%m-%d %H:%M UTC') ---
 HAILO_DEVICE=${HAILO_DEVICE}
 HAILO_GID=${HAILO_GID}
 HAILO_PYTHON_PACKAGE=${HAILO_PYTHON_PACKAGE}
 HAILORT_LIB=${HAILORT_LIB}
-HAILORT_SONAME=${HAILORT_SONAME}
-# Set this to a directory on this host holding your .hef files:
-#PHOTOG_MODELS_PATH=${HOME}/photog/models
+HAILORT_SONAME=${HAILORT_SONAME}${models_hint}
 ENVEOF
 )"
 
@@ -270,10 +280,24 @@ else
   echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml"
   echo
   if [[ "$DEVICE_ARCH_HINT" == "hailo8" ]]; then
-    echo "  This looks like a Hailo-8. qwen2 captioning needs a Hailo-10H, so for"
-    echo "  captions add the CPU path and set PHOTOG_PYTHON_TAG:"
+    echo "  ---------------------------------------------------------------"
+    echo "  This is a HAILO-8, which means NO IMAGE DESCRIPTIONS by default."
+    echo
+    echo "  The qwen2 captioner runs on the accelerator but needs a Hailo-10H"
+    echo "  and HailoRT 5.3.0. There is no HEF, no runtime version and no"
+    echo "  setting that makes it work on a Hailo-8."
+    echo
+    echo "  If you want descriptions, add the Moondream overlay — a 0.5B model"
+    echo "  that runs on the CPU, independent of this accelerator, which keeps"
+    echo "  doing detection and classification as normal:"
     echo
     echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml:docker-compose.moondream.yml"
+    echo "    PHOTOG_PYTHON_TAG=0.1.2-python"
+    echo
+    echo "  Both lines are needed: the overlay selects the -python image, which"
+    echo "  is the only one carrying Moondream's Python environment. Then enable"
+    echo "  'moondream' at /classifier, not qwen2. See docs/hailo.md."
+    echo "  ---------------------------------------------------------------"
     echo
   fi
 fi
