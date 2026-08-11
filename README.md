@@ -18,50 +18,30 @@ it runs on.
 The supported way to run it is Docker Compose. What follows works from a fresh
 install of Debian Trixie or Raspberry Pi OS.
 
----
-
-## What the AI features give you
-
-Photog does two separate AI jobs, and what you get depends on your hardware.
-**Classification** puts tags on photos — objects, scenes, subjects.
-**Descriptions** write a sentence or two about each photo.
-
-| Your hardware | Classification | Descriptions | `COMPOSE_FILE` |
-|---|---|---|---|
-| No accelerator | software — slow | unavailable | `docker-compose.yml` |
-| No accelerator | software — slow | software — slow *(moondream)* | `docker-compose.yml:docker-compose.python.yml` |
-| **Hailo-8** (AI HAT+) | **accelerated** | software — slow *(moondream)* | `docker-compose.yml:docker-compose.hailo.yml:docker-compose.python.yml` |
-| **Hailo-10H** (AI HAT+ 2) | **accelerated** | **accelerated** *(qwen2 — ~12 s/photo)* | `docker-compose.yml:docker-compose.hailo.yml` |
-
-Put that line in `.env` and every `docker compose` command picks it up — no `-f`
-flags to remember. The rows using `docker-compose.python.yml` also need
-`PHOTOG_PYTHON_TAG=0.1.3-python`, because software descriptions need a larger
-image that bundles a Python environment.
-
-Two things worth knowing before you choose:
-
-- **A Hailo-8 cannot do descriptions.** `qwen2` needs a Hailo-10H and HailoRT
-  5.3.0; there is no model, runtime version or setting that changes that. A
-  Hailo-8 still accelerates classification, and `moondream` on the CPU covers
-  descriptions.
-- **Everything else works with no accelerator at all** — import, albums, tags,
-  ratings, smart albums, the photo viewer, the native clients. The AI is an
-  addition, not a requirement, and every classifier ships disabled.
-
----
 
 ## Quick start
 
-### 1. Install Docker
+### 1. Update and Install Docker
 
 ```bash
+sudo apt update && sudo apt full-upgrade -y
+sudo reboot
+
 curl -sSL https://get.docker.com | sh
 sudo usermod -aG docker $USER && newgrp docker
 ```
 
 ### 2. Install the Hailo software — optional
 
-Only if you have a card. Skip to step 3 otherwise.
+Only if you have a Hailo card and want to utilize it. Skip to step 3 otherwise.
+Set up the toolchain.
+
+**Set up the build toolchain**,
+
+```bash
+sudo apt install -y dkms build-essential "linux-headers-$(uname -r)"
+ls -d /lib/modules/$(uname -r)/build      # must exist — this is the real check
+```
 
 **Hailo-8 (AI HAT+)** — accelerates classification, cannot do descriptions:
 
@@ -87,6 +67,9 @@ That should print the device architecture. If it doesn't, fix it now — see
 [docs/hailo.md](docs/hailo.md). Nothing in a container can install a kernel
 driver for you.
 
+On a **Hailo-10H** this leaves you on HailoRT **5.1.1**, which accelerates
+classification but cannot do descriptions. Follow these instructions [docs/upgrade_hailo.md](docs/upgrade_hailo.md) to enable acccelerated descriptions.
+
 ### 3. Install Photog
 
 ```bash
@@ -100,14 +83,6 @@ That creates `~/photog`, fetches the compose files, creates your data
 directories and generates the secrets. **It does not start anything** — it
 finishes by printing the exact command to run next.
 
-Prefer to read the script first? You should:
-
-```bash
-curl -fsSLO https://raw.githubusercontent.com/unsilo/photog-docker/main/install.sh
-less install.sh
-bash install.sh
-```
-
 ### 4. Set up the accelerator — Hailo only
 
 ```bash
@@ -118,12 +93,33 @@ cd ~/photog
 
 `hailo-detect.sh` inspects the card and writes the device node, group id and
 library paths into `.env` — none of which can be known before the hardware is
-looked at. It also prints the `COMPOSE_FILE` line for your card, including the
-description options.
+looked at. It also **sets `COMPOSE_FILE`** to match what it found, so step 5 is
+usually already done:
 
-### 5. Choose your features
+| What it finds | What it sets |
+|---|---|
+| Hailo-10H | `docker-compose.yml:docker-compose.hailo.yml` |
+| Hailo-8 | `…:docker-compose.hailo.yml:docker-compose.python.yml` (+ `PHOTOG_PYTHON_TAG`) |
+| no card | `docker-compose.yml` |
 
-Edit `.env` and set `COMPOSE_FILE` from the table above. For a Hailo-10H:
+The Hailo-8 line assumes you want descriptions, since that card cannot produce
+them itself. The script prints how to drop the extra overlay if you would rather
+have the smaller image.
+
+`download-models.sh` fetches all three models by default, and the captioning one
+is ~3 GB. Skip it with `--vision-only` — on a Hailo-8 it cannot be used anyway.
+`--list` shows what there is.
+
+### 5. Choose your features — usually already done
+
+If step 4 ran with `--append`, `COMPOSE_FILE` is set. Check it:
+
+```bash
+grep COMPOSE_FILE ~/photog/.env
+```
+
+Otherwise set it in `.env` yourself, from
+[the table below](#what-the-ai-features-give-you). For a Hailo-10H:
 
 ```
 COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml
@@ -168,6 +164,43 @@ creates a *directory* at a bind-mount source that does not exist — nginx then
 fails on a config path that is not a file.
 
 ---
+
+## What the AI features give you
+
+Photog does two separate AI jobs, and what you get depends on your hardware.
+**Classification** puts tags on photos — objects, scenes, subjects.
+**Descriptions** write a sentence or two about each photo.
+
+| Your hardware | Classification | Descriptions | `COMPOSE_FILE` |
+|---|---|---|---|
+| No accelerator | software — slow | unavailable | `docker-compose.yml` |
+| No accelerator | software — slow | software — slow *(moondream)* | `docker-compose.yml:docker-compose.python.yml` |
+| **Hailo-8** (AI HAT+) | **accelerated** | software — slow *(moondream)* | `docker-compose.yml:docker-compose.hailo.yml:docker-compose.python.yml` |
+| **Hailo-10H** (AI HAT+ 2) | **accelerated** | **accelerated** *(qwen2 — ~12 s/photo)* | `docker-compose.yml:docker-compose.hailo.yml` |
+
+Put that line in `.env` and every `docker compose` command picks it up — no `-f`
+flags to remember. The rows using `docker-compose.python.yml` also need
+`PHOTOG_PYTHON_TAG=0.1.3-python`, because software descriptions need a larger
+image that bundles a Python environment.
+
+Three things worth knowing before you choose:
+
+- **A Hailo-8 cannot do descriptions.** `qwen2` needs a Hailo-10H and HailoRT
+  5.3.0; there is no model, runtime version or setting that changes that. A
+  Hailo-8 still accelerates classification, and `moondream` on the CPU covers
+  descriptions.
+- **The last row needs one extra step.** `apt install hailo-h10-all` gives you
+  HailoRT 5.1.1, and no captioning model is published below 5.3.0 — so a
+  stock Hailo-10H install accelerates classification but not descriptions until
+  you upgrade the runtime. See
+  [docs/upgrade_hailo.md](docs/upgrade_hailo.md). Classification works
+  either way.
+- **Everything else works with no accelerator at all** — import, albums, tags,
+  ratings, smart albums, the photo viewer, the native clients. The AI is an
+  addition, not a requirement, and every classifier ships disabled.
+
+---
+
 
 ## What you need
 

@@ -391,7 +391,43 @@ volumes.
 
 ## Starting over
 
-Keep the photos, reset everything else:
+**What `down -v` does depends on how you installed.** The `-v` flag removes
+Docker *named volumes*. It does not touch bind mounts — ordinary directories on
+your machine. If you used `install.sh`, your photos, imports, models and
+database are all bind mounts under the data directory you chose, so `down -v`
+removes nothing of yours. If you wrote `.env` by hand and left the paths unset,
+they are named volumes and `down -v` deletes all of it.
+
+Check which you have before running anything destructive:
+
+```bash
+grep -E '^PHOTOG_(WAREHOUSE|DB|IMPORT|MODELS)_PATH=' .env
+```
+
+A value with a `/` in it is a directory on your machine. A variable that is
+absent or blank is a named volume.
+
+```bash
+docker compose config --volumes    # named volumes still in use
+docker volume ls | grep photog     # named volumes that exist right now
+```
+
+The first is the useful one: Compose drops a volume from that list as soon as
+every service using it switched to a bind mount. On an installer-produced stack
+it prints only `photog-cache`, which is the shortest possible proof that your
+data is not in Docker's hands.
+
+### Reset the database, keep the photos
+
+Bind-mounted database (`PHOTOG_DB_PATH` is set):
+
+```bash
+docker compose down
+sudo rm -rf /path/to/your/data/db      # the PHOTOG_DB_PATH value
+docker compose up -d
+```
+
+Named volume (`PHOTOG_DB_PATH` unset):
 
 ```bash
 docker compose down
@@ -399,10 +435,25 @@ docker volume rm photog_photog-db
 docker compose up -d
 ```
 
-Delete **everything**, photos included, with no confirmation prompt:
+The `photog_` prefix is the Compose project name, which is the directory name —
+`~/photog` gives `photog_photog-db`. If you installed somewhere else, take the
+name from `docker volume ls` rather than typing this one.
+
+Either way you come back to an empty library with the photo *files* still on
+disk. Photog does not re-index them; import them again from the import screen.
+
+### Delete everything
 
 ```bash
 docker compose down -v
+```
+
+then, if your paths are bind mounts, the directories as well — this is the part
+`down -v` will not do for you, and there is no confirmation prompt on either
+half:
+
+```bash
+sudo rm -rf /path/to/your/data
 ```
 
 ---

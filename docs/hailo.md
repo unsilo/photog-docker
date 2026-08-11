@@ -22,7 +22,7 @@ different places:
 
 ```
 host kernel driver   hailo_pci (4.x) / hailo1x_pci (5.x)   apt
-host firmware        /lib/firmware/hailo/                  apt (hailofw)
+host firmware        /lib/firmware/hailo/                  apt (hailofw on 4.x)
 libhailort.so        the C++ runtime                       apt
 hailo_platform       the python bindings                   apt, or a wheel
 ```
@@ -113,9 +113,14 @@ checking them out of order is how people end up debugging the wrong layer:
 lspci | grep -i hailo                  # the card is seen at all
 lsmod | grep -i hailo                  # the module is loaded
 dmesg | grep -i hailo                  # what the driver said about it
-ls -l /dev/hailo0                      # the device node exists
+ls -l /dev/hailo0 /dev/h1x-0           # the device node exists (name varies)
 hailortcli fw-control identify         # driver + firmware + libhailort agree
 ```
+
+The node's name depends on which driver bound the card: `hailo_pci` and the
+archive's `hailo1x_pci` both create `/dev/hailo0`, but HailoRT 5.3.0's `hailo1x`
+creates `/dev/h1x-0`. Looking only for `/dev/hailo0` is how a working card gets
+diagnosed as dead.
 
 `fw-control identify` is the single best check: it exercises the whole host
 stack and prints the architecture, so it tells you which chip you have as well
@@ -123,14 +128,22 @@ as whether it works.
 
 On a Pi 5 the PCIe slot may also need enabling in `/boot/firmware/config.txt`.
 
-If `/dev/hailo0` is missing after all that, and `dmesg` mentions firmware, the
-fix is usually:
+If the device node is missing after all that, and `dmesg` mentions firmware, the
+fix is usually to reinstall the package that owns the firmware — **which is not
+the same package on both cards**:
 
 ```bash
-sudo apt install --reinstall hailofw
+dpkg -S /lib/firmware/hailo          # ask, rather than guess
+sudo apt install --reinstall hailofw          # Hailo-8 / 4.x only
+sudo apt install --reinstall hailo-h10-all    # Hailo-10H / 5.x
 ```
 
-That has been the entire fix twice.
+On a Hailo-8 that has been the entire fix twice.
+
+`hailofw` is the archive's **Hailo-8** firmware package and it does not exist on
+the 5.x line at all. `Unable to locate package hailofw` on a Hailo-10H box is
+not a broken apt or a missing repository — it means you are on the 5.x stack and
+are reading advice for the other card.
 
 ### 2. Detect
 
@@ -175,6 +188,63 @@ It detects your architecture from the device and your SDK version from the
 installed runtime, downloads to `PHOTOG_MODELS_PATH`, **verifies the SDK version
 recorded in the downloaded bytes before installing the file**, and normalises
 the filename. `--dry-run` shows what it would fetch.
+
+#### Skipping the captioner
+
+The default fetches everything, and the captioning model is **~3 GB** against
+tens of MB for the other two. On a slow connection, a metered one, or a Hailo-8
+that cannot use it at all, that download is pure waste:
+
+```bash
+./scripts/download-models.sh --vision-only
+```
+
+`--no-vlm` is the same flag. To name models individually — repeatable, or
+comma-separated:
+
+```bash
+./scripts/download-models.sh --skip qwen2-vl
+./scripts/download-models.sh --skip qwen2-vl,yolov11m
+```
+
+`--only <name>` is the inverse: fetch that one and nothing else, which is what
+you want after a runtime upgrade when the vision models are already in place.
+
+To see what there is without downloading anything — this needs no accelerator
+and no network:
+
+```bash
+./scripts/download-models.sh --list
+```
+
+```
+resnet_v1_50   ~25 MB   scene and subject tags
+yolov11m       ~40 MB   object detection
+qwen2-vl       ~3 GB    image descriptions (Hailo-10H only)  [needs SDK 5.3.0+]
+```
+
+A misspelled name is an error, not a silent no-op — `--skip qwen2` (the real
+name is `qwen2-vl`) stops the script rather than downloading the 3 GB file you
+typed the flag to avoid.
+
+**What omitting a model costs you.** Nothing crashes. The classifier simply does
+not start, and its `load_error` at `/classifier` says the HEF is missing — which
+is indistinguishable from a broken install if you have forgotten you skipped it.
+The script says so on the way out for that reason. Fetch it whenever you like;
+re-running is cheap, because a model already present at the right SDK version is
+left alone:
+
+```bash
+./scripts/download-models.sh
+```
+
+Note `--vision-only` keys on where a model comes from, not on its name, so it
+covers any captioning model added later without anyone having to remember.
+
+You do not need this flag on a **Hailo-8**: `qwen2-vl` requires SDK 5.3.0, a
+Hailo-8 runs the 4.x line, and the script already refuses it as unsatisfiable
+and tells you Moondream on the CPU is the route to descriptions. Passing
+`--vision-only` there is harmless and slightly quieter.
 
 That verification is the point. A HEF of the wrong architecture or the wrong SDK
 version **exists**, passes the startup check, and fails later — on the vision
@@ -222,8 +292,13 @@ COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml
 ```
 
 Then plain `docker compose up -d` and `docker compose logs -f photog` do the
-right thing. `hailo-detect.sh` prints the line to use. Add
-`:docker-compose.python.yml` if you also want CPU captioning.
+right thing.
+
+`hailo-detect.sh --append` sets this for you, from what it found: the hailo
+overlay alone on a Hailo-10H, and hailo plus `docker-compose.python.yml` on a
+Hailo-8 — because that card cannot caption and Moondream on the CPU is the only
+way to get descriptions. It replaces any existing `COMPOSE_FILE` line rather
+than adding a second one, so re-running it after a hardware change is safe.
 
 Check the bindings actually loaded:
 
@@ -558,6 +633,51 @@ swaps the runtime, patches and rebuilds the PCIe driver for your kernel, holds
 the packages, and verifies that `hailo_platform.genai.VLM` actually imports —
 which is the check that distinguishes "5.3.0 is installed" from "captioning will
 work".
+
+### `Failed to install PCIe driver to the DKMS tree`
+
+```
+Failed to install PCIe driver to the DKMS tree. Trying to install PCIe
+driver without DKMS
+Failed. Exited with status 2. See /var/log/hailort-pcie-driver.deb.log
+dpkg: error processing package hailort-pcie-driver (--configure):
+```
+
+Almost always **`dkms` or the kernel headers were not installed when the driver
+package's postinst ran**. Any package that builds a kernel module builds it at
+`dpkg --configure` time, so the toolchain has to be there first — this applies
+to `apt install hailo-h10-all` as much as to the debs above.
+
+Fix the ordering and let the postinst finish:
+
+```bash
+sudo apt-get install -y dkms build-essential "linux-headers-$(uname -r)"
+sudo dpkg --configure hailort-pcie-driver
+```
+
+Check that headers actually landed, because the package name varies and apt
+reports success either way:
+
+```bash
+ls -d /lib/modules/$(uname -r)/build
+```
+
+A missing directory there is the real fault. `linux-headers-$(uname -r)` is
+usually right on Raspberry Pi OS; if it does not exist, try
+`raspberrypi-kernel-headers`. If you upgraded the kernel recently, reboot first
+— the headers must match the **running** kernel, not the newest installed one.
+
+`upgrade-hailort.sh` installs the toolchain in phase 0a, before any package is
+touched, so it does not produce this. Versions of the script before 2026-08-11
+installed it in phase 4 — after the postinst had already failed — and the
+resulting message is indistinguishable from the kernel-incompatibility failure
+described below. If you are on an older copy, take the current one.
+
+If the toolchain was already in place, this is the real driver-build failure
+instead: `del_timer_sync` was removed in kernels ≥ 6.15 and the shipped source
+still calls it. The script patches that automatically; by hand, see
+[The device node is gone after the upgrade](#the-device-node-is-gone-after-the-upgrade)
+and the build notes in `scripts/upgrade-hailort.sh`.
 
 ### What you are trading away
 

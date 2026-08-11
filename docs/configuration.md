@@ -16,6 +16,55 @@ with its existing environment.
 
 ---
 
+## Which stack runs
+
+### `COMPOSE_FILE`
+
+Colon-separated list of compose files to layer, read by Compose itself. This is
+the one variable that decides *which* Photog you are running, and it is the
+reason none of the commands in these docs need `-f` flags.
+
+```
+COMPOSE_FILE=docker-compose.yml
+COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml
+COMPOSE_FILE=docker-compose.yml:docker-compose.python.yml
+COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml:docker-compose.python.yml
+```
+
+`install.sh` writes the first form. After that you rarely set this by hand:
+`scripts/hailo-detect.sh --append` derives it from the hardware it finds — the
+Hailo overlay on a Hailo-10H, Hailo plus Python on a Hailo-8 (that card cannot
+caption, so Moondream on the CPU is the only route), and the base file alone on
+a machine with no accelerator. It replaces the existing line rather than adding
+a second, so re-running it after a hardware change is safe. The README's table
+says what each combination gives you.
+
+Rules worth knowing:
+
+- **`docker-compose.yml` must come first.** The list is applied left to right and
+  later files override earlier ones. Reversing it silently gives you the base
+  image again.
+- **Scalars override, lists append.** A later file replacing `image:` wins
+  outright, but its `volumes:` and `devices:` entries are added to what came
+  before, not substituted for it. This is why the overlays are small.
+- **It is relative to the directory you run from.** Compose resolves these paths
+  against the working directory, not against `.env`.
+- **Every `docker compose` command in this directory picks it up**, including
+  `pull`, `down` and `logs`. Run one from elsewhere and you get the base stack
+  and a confusing diff.
+
+Check what you actually assembled:
+
+```bash
+docker compose config | less
+```
+
+Missing overlay variables surface here rather than at `up` time — the Hailo
+overlay uses `${VAR:?}` for the values that have no safe default, so
+`docker compose config` fails loudly with the name of what is unset.
+
+---
+
 ## Required
 
 ### `PHX_HOST`
@@ -123,6 +172,43 @@ compose file.
 If you are writing `.env` by hand rather than using the installer, `mkdir
 import` first. Docker creates a missing bind-mount source as a root-owned
 directory, and the import screen then shows it empty.
+
+### `PHOTOG_DB_PATH`
+
+Where Postgres keeps its data directory. Unset means the named volume
+`photog-db`, which `docker compose down -v` will delete without asking.
+
+```
+PHOTOG_DB_PATH=/mnt/data/photog/db
+```
+
+`install.sh` sets this by default, to the `db` directory under the data location
+you chose. The point is narrow: a bind-mounted database survives `down -v`, and
+`down -v` is the command people reach for when something is stuck.
+
+**Do not `chown` this directory.** Unlike every other path here, it is not uid
+1000's. The Postgres image starts as root, chowns its data directory to uid
+**999** and re-execs; a `chown 1000` breaks it, with a permissions error that
+reads like a bug in Photog. Create the directory and leave its ownership alone.
+
+**Only on a real local filesystem.** ext4, xfs, btrfs, zfs. Postgres needs POSIX
+ownership and honest `fsync`, and NFS, CIFS/SMB, exFAT and virtiofs shares give
+it neither — the failure is not a clean error at startup but corruption after a
+power cut. `install.sh` checks and falls back to the named volume rather than
+using one. On a Pi this means the SSD, and it means the SSD directly, not a
+network share mounted on it.
+
+The mount is `/var/lib/postgresql`, the parent of `PGDATA` — Postgres 18 puts
+its data at `18/docker` beneath that. Expect a `18/` subdirectory to appear.
+
+Changing the value points the stack at a **different, empty** database; it does
+not move the existing one. To move it: stop the stack, `sudo cp -a` the old
+directory to the new location so ownership survives, then set the variable.
+
+**Not a backup.** A raw data directory can only be read by the Postgres major
+version that wrote it, so it does not survive an upgrade to Postgres 19 and it
+is not portable to another machine. Take `pg_dump` backups as well — see
+[upgrading.md](upgrading.md).
 
 ---
 

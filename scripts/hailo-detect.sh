@@ -32,7 +32,18 @@ bad()  { printf '\033[1;31mfail\033[0m  %s\n' "$*"; FAILED=1; }
 warn() { printf '\033[1;33mwarn\033[0m  %s\n' "$*"; }
 info() { printf '      %s\n' "$*"; }
 
+# sort -V puts the lower version first; if $1 sorts first and differs, $1 < $2.
+version_lt() {
+  [[ "$1" != "$2" ]] && [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" == "$1" ]]
+}
+
+# The floor for qwen2 captioning. Not a preference — Hailo publishes no VLM HEF
+# below this, so there is nothing to load on an older runtime. Same constant as
+# download-models.sh enforces.
+CAPTION_MIN_VERSION="5.3.0"
+
 FAILED=0
+HAILORT_VERSION=""
 DEVICE_ARCH_HINT=""
 HAILO_GID=""
 HAILO_DEVICE=""
@@ -102,6 +113,9 @@ fi
 if command -v hailortcli >/dev/null 2>&1; then
   ver="$(hailortcli --version 2>/dev/null | head -1)"
   ok "hailortcli: ${ver}"
+  # Kept as a bare x.y.z for the captioning check at the end. The banner text
+  # around it has changed between releases; the number has not.
+  HAILORT_VERSION="$(printf '%s' "$ver" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
   ident="$(hailortcli fw-control identify 2>&1 | grep -iE 'Device Architecture|Board Name' | head -2)"
   # Which chip, for the captioning advice at the end: qwen2 needs a Hailo-10H,
   # so a Hailo-8 owner has to be told about the CPU path or they get nothing.
@@ -113,7 +127,17 @@ if command -v hailortcli >/dev/null 2>&1; then
     while IFS= read -r l; do ok "${l#"${l%%[![:space:]]*}"}"; done <<< "$ident"
   else
     warn "hailortcli fw-control identify returned nothing — driver or firmware trouble"
-    info "check: dmesg | grep -i hailo   and   sudo apt install --reinstall hailofw"
+    info "check: sudo dmesg | grep -i hailo"
+    info ""
+    info "A firmware complaint or 'probe ... failed with error -2' means the"
+    info "firmware is missing. Reinstall the package that OWNS it, which differs"
+    info "by card — 'dpkg -L <pkg> | grep -i firmware' tells you which:"
+    info "  Hailo-8   : sudo apt install --reinstall hailofw"
+    info "  Hailo-10H : sudo apt install --reinstall hailo-h10-all"
+    info ""
+    info "hailofw is HAILO-8 firmware. On a Hailo-10H box it is not merely wrong,"
+    info "the package does not exist — 'Unable to locate package hailofw' there"
+    info "means you are on the 5.x stack, not that your install is broken."
   fi
 else
   warn "hailortcli not on PATH — cannot confirm the runtime version"
@@ -234,11 +258,93 @@ else
   info "See docs/hailo.md for what to do instead."
 fi
 
+# --- what COMPOSE_FILE should be -------------------------------------------
+#
+# Derived, not asked. The rules are the README's hardware table, and there is
+# exactly one right answer per machine:
+#
+#   Hailo-10H   hailo overlay           the card captions; nothing else needed
+#   Hailo-8     hailo + python overlay  the card cannot caption, moondream can
+#   no card     base only               everything works, the AI is just slow
+#
+# The Hailo-8 default assumes descriptions are wanted, because the alternative
+# is a machine that silently cannot produce any and an operator with no reason
+# to suspect a compose overlay. Dropping the overlay is one edit and is printed
+# below; discovering you needed it is not.
+PYTHON_TAG_VALUE="${PHOTOG_TAG:-0.1.3}-python"
+HAILO_USABLE=0
+[[ -n "$HAILO_GID$HAILO_PYTHON_PACKAGE$HAILORT_LIB" ]] && HAILO_USABLE=1
+
+WANT_PYTHON_TAG=0
+if [[ $HAILO_USABLE -eq 1 && "$DEVICE_ARCH_HINT" == "hailo8" ]]; then
+  COMPOSE_TARGET="docker-compose.yml:docker-compose.hailo.yml:docker-compose.python.yml"
+  WANT_PYTHON_TAG=1
+elif [[ $HAILO_USABLE -eq 1 ]]; then
+  COMPOSE_TARGET="docker-compose.yml:docker-compose.hailo.yml"
+else
+  COMPOSE_TARGET="docker-compose.yml"
+fi
+
+# Replace in place rather than append. COMPOSE_FILE is a scalar — a second line
+# does not merge with the first, it silently wins — and install.sh always wrote
+# one, so appending would leave every .env with two. ENVIRON carries the value
+# into awk so nothing in it needs escaping.
+set_env_var() {
+  local key="$1" value="$2" tmp
+  tmp="$(mktemp)" || return 1
+  if grep -qE "^${key}=" .env 2>/dev/null; then
+    KEY="$key" VALUE="$value" awk '
+      $0 ~ "^" ENVIRON["KEY"] "=" {
+        if (!seen) { print ENVIRON["KEY"] "=" ENVIRON["VALUE"]; seen = 1 }
+        next
+      }
+      { print }
+    ' .env > "$tmp" || { rm -f "$tmp"; return 1; }
+  else
+    cat .env > "$tmp" 2>/dev/null || true
+    printf '%s=%s\n' "$key" "$value" >> "$tmp"
+  fi
+  # Truncate-and-write rather than mv, so .env keeps its mode 600 and owner.
+  cat "$tmp" > .env || { rm -f "$tmp"; return 1; }
+  rm -f "$tmp"
+}
+
 # --- output ----------------------------------------------------------------
 
 echo
-if [[ -z "$HAILO_GID$HAILO_PYTHON_PACKAGE$HAILORT_LIB" ]]; then
-  echo "Nothing usable found. Fix the failures above and run this again."
+if [[ $HAILO_USABLE -eq 0 ]]; then
+  echo "No usable Hailo accelerator found."
+  echo
+  echo "That is not necessarily wrong — everything in Photog works without one."
+  echo "Classification runs in software, and it is slow but correct."
+  if [[ "$APPEND" == "1" ]] && [[ -f .env ]]; then
+    if set_env_var COMPOSE_FILE "$COMPOSE_TARGET"; then
+      echo
+      ok "set COMPOSE_FILE=${COMPOSE_TARGET} in .env"
+    fi
+  else
+    echo
+    echo "The matching .env line, which is also the installer's default:"
+    echo
+    echo "    COMPOSE_FILE=${COMPOSE_TARGET}"
+  fi
+  echo
+  echo "  ---------------------------------------------------------------"
+  echo "  WANT IMAGE DESCRIPTIONS? Two more lines and no hardware."
+  echo
+  echo "  Moondream is a 0.5B model that runs on the CPU. On a Pi it takes"
+  echo "  the better part of a minute per photo, which is fine for a library"
+  echo "  chewed through overnight and painful if you are watching it:"
+  echo
+  echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.python.yml"
+  echo "    PHOTOG_PYTHON_TAG=${PYTHON_TAG_VALUE}"
+  echo
+  echo "  Both lines are needed: the overlay selects the -python image, which"
+  echo "  is the only one carrying Moondream's Python environment. Then enable"
+  echo "  'moondream' at /classifier."
+  echo "  ---------------------------------------------------------------"
+  echo
+  echo "If you DO have a card, fix the failures above and run this again."
   exit 1
 fi
 
@@ -264,55 +370,139 @@ HAILORT_SONAME=${HAILORT_SONAME}${models_hint}
 ENVEOF
 )"
 
-echo "Add to .env:"
-echo
-echo "$block" | sed 's/^/    /'
-echo
-
-# COMPOSE_FILE is deliberately NOT part of the appended block: it is one line
-# that must not appear twice, and only the operator knows whether captioning is
-# wanted. Advice, not automation.
-if [[ -f .env ]] && grep -qE '^COMPOSE_FILE=.*docker-compose\.hailo\.yml' .env; then
-  ok "COMPOSE_FILE in .env already includes the hailo overlay"
-else
-  echo "Also set COMPOSE_FILE in .env, so no -f flags are needed:"
-  echo
-  echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml"
-  echo
-  if [[ "$DEVICE_ARCH_HINT" == "hailo8" ]]; then
-    echo "  ---------------------------------------------------------------"
-    echo "  This is a HAILO-8, which means NO IMAGE DESCRIPTIONS by default."
-    echo
-    echo "  The qwen2 captioner runs on the accelerator but needs a Hailo-10H"
-    echo "  and HailoRT 5.3.0. There is no HEF, no runtime version and no"
-    echo "  setting that makes it work on a Hailo-8."
-    echo
-    echo "  If you want descriptions, add the Moondream overlay — a 0.5B model"
-    echo "  that runs on the CPU, independent of this accelerator, which keeps"
-    echo "  doing detection and classification as normal:"
-    echo
-    echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml:docker-compose.python.yml"
-    echo "    PHOTOG_PYTHON_TAG=0.1.3-python"
-    echo
-    echo "  Both lines are needed: the overlay selects the -python image, which"
-    echo "  is the only one carrying Moondream's Python environment. Then enable"
-    echo "  'moondream' at /classifier, not qwen2. See docs/hailo.md."
-    echo "  ---------------------------------------------------------------"
-    echo
-  fi
-fi
+# --- write, then describe what was written ---------------------------------
+#
+# The write happens first so the heading can be true. Printing "Add to .env"
+# and then appending underneath it left the reader with an instruction that had
+# already been carried out.
+WROTE_BLOCK=0
+WROTE_COMPOSE=0
+BLOCK_SKIPPED=""
 
 if [[ "$APPEND" == "1" ]]; then
   if [[ ! -f .env ]]; then
     echo "no .env in $(pwd) — run this from your Photog directory" >&2
     exit 1
   fi
+
   if grep -qE '^(HAILO_GID|HAILO_DEVICE)=' .env; then
-    echo "'.env' already has HAILO_GID — not appending. Edit it by hand." >&2
-    exit 1
+    BLOCK_SKIPPED="yes"
+  else
+    printf '\n%s\n' "$block" >> .env
+    WROTE_BLOCK=1
   fi
-  printf '\n%s\n' "$block" >> .env
-  echo "appended to $(pwd)/.env"
+
+  # Set regardless of whether the Hailo block was skipped: it is derived from
+  # the hardware, it is idempotent, and a stale COMPOSE_FILE is the single most
+  # common reason a correctly-detected card goes unused.
+  if set_env_var COMPOSE_FILE "$COMPOSE_TARGET"; then
+    WROTE_COMPOSE=1
+  else
+    warn "could not update COMPOSE_FILE in .env — set it by hand:"
+    warn "  COMPOSE_FILE=${COMPOSE_TARGET}"
+  fi
+
+  if [[ $WANT_PYTHON_TAG -eq 1 ]]; then
+    set_env_var PHOTOG_PYTHON_TAG "$PYTHON_TAG_VALUE" \
+      || warn "could not set PHOTOG_PYTHON_TAG=${PYTHON_TAG_VALUE} — set it by hand"
+  fi
+fi
+
+if [[ $WROTE_BLOCK -eq 1 ]]; then
+  echo "Added to $(pwd)/.env:"
+else
+  echo "Add to .env:"
+fi
+echo
+echo "$block" | sed 's/^/    /'
+echo "    COMPOSE_FILE=${COMPOSE_TARGET}"
+[[ $WANT_PYTHON_TAG -eq 1 ]] && echo "    PHOTOG_PYTHON_TAG=${PYTHON_TAG_VALUE}"
+echo
+
+if [[ -n "$BLOCK_SKIPPED" ]]; then
+  warn ".env already has HAILO_ lines — those were left alone, not overwritten."
+  info "COMPOSE_FILE was still set, because it follows from the hardware."
+  info ""
+  info "If you just changed HailoRT, the old values are now WRONG — the library"
+  info "is mounted by its exact versioned soname and that name has moved. Delete"
+  info "the HAILO_DEVICE / HAILO_GID / HAILO_PYTHON_PACKAGE / HAILORT_* lines"
+  info "from .env and run this again."
+  echo
+fi
+
+if [[ $WROTE_COMPOSE -eq 1 ]]; then
+  ok "COMPOSE_FILE=${COMPOSE_TARGET}"
+else
+  info "COMPOSE_FILE above is what this machine should run — no -f flags needed."
+fi
+
+if [[ "$DEVICE_ARCH_HINT" == "hailo8" ]]; then
+  echo
+  echo "  ---------------------------------------------------------------"
+  echo "  This is a HAILO-8: it accelerates classification but CANNOT write"
+  echo "  descriptions. qwen2 needs a Hailo-10H and HailoRT ${CAPTION_MIN_VERSION}, and there"
+  echo "  is no HEF, runtime version or setting that changes that."
+  echo
+  echo "  So COMPOSE_FILE above includes docker-compose.python.yml, which adds"
+  echo "  Moondream — a 0.5B model running on the CPU, independent of the card,"
+  echo "  which keeps doing detection and classification at full speed. Enable"
+  echo "  'moondream' at /classifier, not qwen2."
+  echo
+  echo "  Descriptions are slow that way: the better part of a minute per photo"
+  echo "  on a Pi. If you do not want them, drop the last overlay and use the"
+  echo "  smaller image — about 95 MB less to pull:"
+  echo
+  echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml"
+  echo
+  echo "  PHOTOG_PYTHON_TAG then has no effect and can stay or go."
+  echo "  ---------------------------------------------------------------"
+fi
+
+# The Hailo-10H trap, checked here because this is the first script that has
+# both facts at once: which chip, and which runtime.
+#
+# `apt install hailo-h10-all` gives you 5.1.1 — the Raspberry Pi archive caps
+# every h10- package there — and Hailo publishes no VLM HEF below 5.3.0. That
+# combination is silent: detection and classification work perfectly, so the
+# box looks healthy right up until someone enables qwen2 months later and gets
+# HAILO_INVALID_OPERATION(6), which names neither the version nor the file.
+# Saying it now, unprompted, is worth more than any error message later.
+if [[ "$DEVICE_ARCH_HINT" == "hailo10" && -n "${HAILORT_VERSION:-}" ]] \
+   && version_lt "$HAILORT_VERSION" "$CAPTION_MIN_VERSION"; then
+  echo "  ---------------------------------------------------------------"
+  echo "  HAILO-10H ON HAILORT ${HAILORT_VERSION} — CAPTIONING WILL NOT WORK YET."
+  echo
+  echo "  Your card can do image descriptions. This runtime cannot: no VLM"
+  echo "  model is published below ${CAPTION_MIN_VERSION}, so there is nothing for qwen2"
+  echo "  to load. It fails with HAILO_INVALID_OPERATION(6) and says no more"
+  echo "  than that."
+  echo
+  echo "  'apt install hailo-h10-all' always lands here — the Raspberry Pi"
+  echo "  archive caps every h10- package at 5.1.1. This is not a mistake you"
+  echo "  made."
+  echo
+  echo "  Everything else works right now. Detection and classification are"
+  echo "  fully accelerated on ${HAILORT_VERSION} and gain nothing from upgrading."
+  echo "  Carry on and come back to this when you want descriptions."
+  echo
+  echo "  When you do: HailoRT ${CAPTION_MIN_VERSION} comes from Hailo's own debs, which"
+  echo "  REPLACE the archive's packages rather than upgrading them, and apt"
+  echo "  stops managing the result. Read what you give up first:"
+  echo
+  echo "    ./scripts/upgrade-hailort.sh --dry-run"
+  echo "    docs/hailo.md, 'Upgrading to HailoRT ${CAPTION_MIN_VERSION}'"
+  echo
+  echo "  Until then, skip qwen2 in download-models.sh — it skips it for you —"
+  echo "  and leave that classifier disabled."
+  echo "  ---------------------------------------------------------------"
+  echo
+elif [[ "$DEVICE_ARCH_HINT" == "hailo10" && -n "${HAILORT_VERSION:-}" ]]; then
+  ok "HailoRT ${HAILORT_VERSION} — new enough for qwen2 captioning (needs ${CAPTION_MIN_VERSION}+)"
+fi
+
+if [[ "$APPEND" != "1" ]]; then
+  echo
+  info "Nothing was written. Re-run with --append to have this done for you."
 fi
 
 [[ "$FAILED" == "1" ]] && exit 1
