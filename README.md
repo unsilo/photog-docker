@@ -36,7 +36,7 @@ sudo usermod -aG docker $USER && newgrp docker
 Only if you have a Hailo card and want to utilize it. Skip to step 3 otherwise.
 Set up the toolchain.
 
-**Set up the build toolchain**,
+**Set up the build toolchain**:
 
 ```bash
 sudo apt install -y dkms build-essential "linux-headers-$(uname -r)"

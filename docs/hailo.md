@@ -218,10 +218,47 @@ and no network:
 ```
 
 ```
-resnet_v1_50   ~25 MB   scene and subject tags
-yolov11m       ~40 MB   object detection
-qwen2-vl       ~3 GB    image descriptions (Hailo-10H only)  [needs SDK 5.3.0+]
+resnet_v1_50   ~25 MB   default   scene and subject tags
+yolov11m       ~40 MB   default   object detection
+yolov8m        ~50 MB   opt-in    object detection, faster than yolov11m on a Hailo-8
+qwen2-vl       ~3 GB    default   image descriptions (Hailo-10H only)  [needs SDK 5.3.0+]
 ```
+
+**opt-in** models are alternatives to something already in the default set, so
+they are fetched only when named — the app runs one detector at a time, and
+pulling both is wasted disk:
+
+```bash
+./scripts/download-models.sh --include yolov8m     # defaults plus this one
+./scripts/download-models.sh --only yolov8m        # only this one
+```
+
+#### Which detector
+
+`yolov8m` and `yolov11m` are both supported, and which is the better trade
+**depends on the card** — the answer is not the same on both:
+
+| | Hailo-8 | Hailo-10H |
+|---|---|---|
+| yolov8m | 49.2 mAP · 66.9 FPS | 49.2 mAP · 78.5 FPS |
+| yolov11m | 49.9 mAP · 50.2 FPS | 50.1 mAP · 70.6 FPS |
+| cost of v11m | **+0.7 mAP for −25% FPS** | **+0.9 mAP for −10% FPS** |
+
+On a **Hailo-10H**, `yolov11m` is close to free and is the default for that
+reason. On a **Hailo-8**, and more so a **Hailo-8L**, a quarter of the
+detector's throughput for two-thirds of a point of mAP is a much weaker deal —
+`--include yolov8m` and switch the classifier if detection turns out to be your
+bottleneck.
+
+Whether it *is* the bottleneck is worth measuring rather than assuming. Import
+is usually I/O bound — JPEG decode, thumbnailing and Postgres dominate on a Pi —
+so the FPS column often does not reach the wall clock at all. Watch
+`hailortcli monitor` during an import before optimising it.
+
+Larger variants exist upstream (`yolov11l` at 52.3 mAP, `yolov11x` at 53.1) but
+are not in the catalogue and have no classifier row in the app. The curve goes
+flat there anyway: `l` buys +2.4 mAP over `m` for −24% FPS, while `x` buys only
++0.8 more for another −52%.
 
 A misspelled name is an error, not a silent no-op — `--skip qwen2` (the real
 name is `qwen2-vl`) stops the script rather than downloading the 3 GB file you
@@ -253,12 +290,50 @@ VLM as `Qwen2-VL-2B-Instruct.hef` while the classifier row asks for
 `qwen2-vl-2b-instruct.hef`; Linux is case-sensitive, and a case-only mismatch
 resolves silently to a file that is not there.
 
-By hand, if you prefer. Two upstreams, two path shapes:
+#### Two version numbers, and they are not the same number
+
+This trips everyone once, so it is worth thirty seconds.
+
+| | Hailo-8 / 8L | Hailo-10H / 15H |
+|---|---|---|
+| Model Zoo | **v2.x** (currently 2.19.0) | v5.x |
+| Dataflow Compiler | v3.x | v5.x |
+| HailoRT | 4.x | 5.x |
+
+**On the Hailo-10H line all three numbers are the same.** On the Hailo-8 line
+they are three unrelated sequences. The model zoo's `master` branch is
+Hailo-10/15 only; Hailo-8 and 8L live on its `v2.x` branch.
+
+The vision download URL is versioned by the **model zoo**, not by your runtime:
 
 ```
-vision   https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v<ver>/<arch>/<model>.hef
-genai    https://dev-public.hailo.ai/v<ver>/blob/<Model>.hef
+vision   https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v<zoo>/<arch>/<model>.hef
+genai    https://dev-public.hailo.ai/v<sdk>/blob/<Model>.hef
 ```
+
+So a Hailo-8 running HailoRT 4.20.0 wants
+`.../Compiled/**v2.19.0**/hailo8l/yolov11m.hef` — not `v4.20.0`, which has never
+existed and answers with a 403 rather than anything that mentions versions.
+
+`download-models.sh` handles this: `--version` is the runtime, `--zoo-version`
+is the model zoo, and on a Hailo-8 it defaults to the head of the 2.x branch.
+Override it when that branch moves:
+
+```bash
+./scripts/download-models.sh --zoo-version 2.19.0
+```
+
+There is no formula converting one to the other. Known fixed points: zoo v2.14
+is HailoRT 4.20.0, v2.15 is 4.21.0, v2.16 is 4.22.0. After that the
+correspondence stops being published anywhere machine-readable, which is why
+this is a flag and not a calculation.
+
+One consequence worth knowing: on the Hailo-8 line the script **reports** the
+`sdk-version` inside a downloaded HEF but does not enforce it. That header
+records the *compiler* version (3.x), and comparing it against a HailoRT 4.x
+number is arithmetic across two unrelated scales — it would reject correct files
+and pass wrong ones with equal confidence. On the Hailo-10H line, where the
+numbers genuinely match, the check is exact and a mismatch is refused.
 
 Filenames on disk must match what the classifier rows ask for:
 
