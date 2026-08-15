@@ -1,5 +1,39 @@
 # Hailo acceleration
 
+
+Set up the toolchain.
+
+**Set up the build toolchain**:
+
+```bash
+sudo apt install -y dkms build-essential "linux-headers-$(uname -r)"
+ls -d /lib/modules/$(uname -r)/build      # must exist — this is the real check
+```
+
+**Hailo-8 (AI HAT+)** — accelerates classification, cannot do descriptions:
+
+```bash
+sudo apt install hailo-all
+sudo reboot
+```
+
+**Hailo-10H (AI HAT+ 2)** — accelerates both:
+
+```bash
+sudo apt install hailo-h10-all
+sudo reboot
+```
+
+After the reboot, check the card is alive before going further:
+
+```bash
+hailortcli fw-control identify
+```
+
+
+
+
+
 > **Experimental in 0.1.0.** The bare-metal path is verified — object detection
 > and scene classification have been checked against known-answer images on both
 > a Hailo-8 and a Hailo-10H. **The containerised path in this document has not
@@ -616,17 +650,13 @@ the Pi's CPU, entirely independent of the accelerator, so your Hailo-8 keeps
 doing detection and classification while the CPU does captions.
 
 It needs the `-python` image, because its Python environment is ~350 MB and the
-default image deletes it at build time:
+default image deletes it at build time. The overlay selects that image itself —
+it appends `-python` to whatever `PHOTOG_TAG` is set to, so adding the overlay
+is the whole change:
 
 ```bash
 cd ~/photog
-```
 
-```
-PHOTOG_PYTHON_TAG=0.1.3-python
-```
-
-```bash
 docker compose \
   -f docker-compose.yml \
   -f docker-compose.hailo.yml \

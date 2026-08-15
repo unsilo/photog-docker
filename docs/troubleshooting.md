@@ -122,7 +122,7 @@ Same cause as above, one step later: the image was pulled for the wrong
 architecture and the binaries inside it will not run.
 
 ```bash
-docker image inspect tehsnappysoftware/photog:0.1.3 --format '{{.Architecture}}'
+docker image inspect tehsnappysoftware/photog:0.1.4 --format '{{.Architecture}}'
 uname -m
 ```
 

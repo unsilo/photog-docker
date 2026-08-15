@@ -25,10 +25,11 @@
 
 services:
   photog:
-    # Same version, `-python` variant. Overrides the base file's image outright,
-    # so PHOTOG_TAG does not apply here — set PHOTOG_PYTHON_TAG instead, and
-    # keep the two in step when you upgrade.
-    image: tehsnappysoftware/photog:${PHOTOG_PYTHON_TAG:-0.1.3-python}
+    # Same version, `-python` variant: the two images are built and published
+    # together, so the tag is PHOTOG_TAG with a suffix rather than a second
+    # variable to keep in step. Compose interpolates first and concatenates
+    # after, so the `-python` here lands outside the substitution.
+    image: tehsnappysoftware/photog:${PHOTOG_TAG:-0.1.4}-python
 
     environment:
       # Moondream fetches its weights at runtime with `hf_hub_download`

@@ -291,10 +291,14 @@ the native clients will not connect.
 
 ### `PHOTOG_TAG`
 
-Image tag to run. `0.1.3` pins it; `latest` tracks the newest release.
+Image tag to run. `0.1.4` pins it; `latest` tracks the newest release.
 
 Pin it. It turns upgrading into a decision rather than a side effect of
 `docker compose pull`.
+
+It covers the `-python` variant too: `docker-compose.python.yml` appends
+`-python` to this value rather than taking a tag of its own, so the two images
+cannot drift apart.
 
 ### `PHOTOG_ALLOW_REGISTRATION`
 
@@ -319,6 +323,37 @@ default of 10 mostly buys context switching. Raise it on a bigger machine.
 for a bad upgrade — it gets you a shell against a database the app will not
 otherwise boot on. Leave it unset in normal use; migrations are idempotent and
 running them is a no-op after the first boot.
+
+### `PHOTOG_GEONAMES_USERNAME`
+
+Turns a photo's GPS coordinates into country, state and place tags. **Off
+unless you set this**, because it is an online lookup against geonames.org
+against a quota that belongs to whoever's account is used.
+
+```
+PHOTOG_GEONAMES_USERNAME=your-geonames-username
+```
+
+Two steps, and the second is the one everyone misses:
+
+1. register at [geonames.org/login](https://www.geonames.org/login) — free
+2. on your account page, **enable the username for the free web services**
+
+A brand-new account can log in and still have every API call rejected until
+that box is ticked. The app logs the rejection and stops asking rather than
+retrying — the message names the variable.
+
+Unset, photos import normally and keep their GPS EXIF. They get no place tags,
+and can still be placed by hand. Nothing fails.
+
+`PHOTOG_GEONAMES_LANGUAGE` defaults to `en`. `PHOTOG_GEONAMES_BASE_URL` is only
+for the commercial endpoint (`https://secure.geonames.net`); leave it unset for
+the free service.
+
+The free tier is 20,000 credits/day and 1,000/hour per username, and a lookup
+is one credit — so a large first import can exhaust an hour's allowance. That is
+handled: the app waits and retries a bounded number of times, then gives up on
+that photo and logs it. Re-import or re-place those later.
 
 ### `POSTGRES_USER` / `POSTGRES_DB`
 

@@ -25,7 +25,7 @@ APPEND=0
 [[ "${1:-}" == "--append" ]] && APPEND=1
 
 PY="${PHOTOG_PYTHON:-/usr/bin/python3}"
-IMAGE="tehsnappysoftware/photog:${PHOTOG_TAG:-0.1.3}"
+IMAGE="tehsnappysoftware/photog:${PHOTOG_TAG:-0.1.4}"
 
 ok()   { printf '\033[1;32m  ok\033[0m  %s\n' "$*"; }
 bad()  { printf '\033[1;31mfail\033[0m  %s\n' "$*"; FAILED=1; }
@@ -271,14 +271,11 @@ fi
 # is a machine that silently cannot produce any and an operator with no reason
 # to suspect a compose overlay. Dropping the overlay is one edit and is printed
 # below; discovering you needed it is not.
-PYTHON_TAG_VALUE="${PHOTOG_TAG:-0.1.3}-python"
 HAILO_USABLE=0
 [[ -n "$HAILO_GID$HAILO_PYTHON_PACKAGE$HAILORT_LIB" ]] && HAILO_USABLE=1
 
-WANT_PYTHON_TAG=0
 if [[ $HAILO_USABLE -eq 1 && "$DEVICE_ARCH_HINT" == "hailo8" ]]; then
   COMPOSE_TARGET="docker-compose.yml:docker-compose.hailo.yml:docker-compose.python.yml"
-  WANT_PYTHON_TAG=1
 elif [[ $HAILO_USABLE -eq 1 ]]; then
   COMPOSE_TARGET="docker-compose.yml:docker-compose.hailo.yml"
 else
@@ -330,18 +327,17 @@ if [[ $HAILO_USABLE -eq 0 ]]; then
   fi
   echo
   echo "  ---------------------------------------------------------------"
-  echo "  WANT IMAGE DESCRIPTIONS? Two more lines and no hardware."
+  echo "  WANT IMAGE DESCRIPTIONS? One more line and no hardware."
   echo
   echo "  Moondream is a 0.5B model that runs on the CPU. On a Pi it takes"
   echo "  the better part of a minute per photo, which is fine for a library"
   echo "  chewed through overnight and painful if you are watching it:"
   echo
   echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.python.yml"
-  echo "    PHOTOG_PYTHON_TAG=${PYTHON_TAG_VALUE}"
   echo
-  echo "  Both lines are needed: the overlay selects the -python image, which"
-  echo "  is the only one carrying Moondream's Python environment. Then enable"
-  echo "  'moondream' at /classifier."
+  echo "  That one line is all it takes: the overlay selects the -python image,"
+  echo "  which is the only one carrying Moondream's Python environment. Then"
+  echo "  enable 'moondream' at /classifier."
   echo "  ---------------------------------------------------------------"
   echo
   echo "If you DO have a card, fix the failures above and run this again."
@@ -401,11 +397,6 @@ if [[ "$APPEND" == "1" ]]; then
     warn "could not update COMPOSE_FILE in .env — set it by hand:"
     warn "  COMPOSE_FILE=${COMPOSE_TARGET}"
   fi
-
-  if [[ $WANT_PYTHON_TAG -eq 1 ]]; then
-    set_env_var PHOTOG_PYTHON_TAG "$PYTHON_TAG_VALUE" \
-      || warn "could not set PHOTOG_PYTHON_TAG=${PYTHON_TAG_VALUE} — set it by hand"
-  fi
 fi
 
 if [[ $WROTE_BLOCK -eq 1 ]]; then
@@ -416,7 +407,6 @@ fi
 echo
 echo "$block" | sed 's/^/    /'
 echo "    COMPOSE_FILE=${COMPOSE_TARGET}"
-[[ $WANT_PYTHON_TAG -eq 1 ]] && echo "    PHOTOG_PYTHON_TAG=${PYTHON_TAG_VALUE}"
 echo
 
 if [[ -n "$BLOCK_SKIPPED" ]]; then
@@ -453,8 +443,6 @@ if [[ "$DEVICE_ARCH_HINT" == "hailo8" ]]; then
   echo "  smaller image — about 95 MB less to pull:"
   echo
   echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml"
-  echo
-  echo "  PHOTOG_PYTHON_TAG then has no effect and can stay or go."
   echo "  ---------------------------------------------------------------"
 fi
 

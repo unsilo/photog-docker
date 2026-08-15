@@ -122,6 +122,23 @@ services:
 
       # Escape hatch for a bad migration: start the app without running
       # PhoTog.Release.setup() so you can get a shell.
+      # Reverse geocoding: turns a photo's GPS coordinates into country, state
+      # and place tags. OFF unless you supply an account, because it is an
+      # online lookup against geonames.org and the account has to be yours.
+      #
+      # Free: register at https://www.geonames.org/login, then enable the
+      # username for the free web services on your account page — a fresh
+      # account is NOT enabled until you tick that box, and until you do every
+      # lookup is rejected.
+      #
+      # Unset, photos still import and still keep their GPS EXIF. They get no
+      # place tags and can be placed by hand.
+      PHOTOG_GEONAMES_USERNAME: ${PHOTOG_GEONAMES_USERNAME:-}
+      PHOTOG_GEONAMES_LANGUAGE: ${PHOTOG_GEONAMES_LANGUAGE:-en}
+      # Only for the commercial endpoint (https://secure.geonames.net). Leave
+      # blank for the free service.
+      PHOTOG_GEONAMES_BASE_URL: ${PHOTOG_GEONAMES_BASE_URL:-}
+
       PHOTOG_SKIP_MIGRATIONS: ${PHOTOG_SKIP_MIGRATIONS:-false}
 
       # A Pi 5 has 4 cores, and Postgres is competing for the same ones. 10 (the

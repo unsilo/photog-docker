@@ -16,7 +16,7 @@
 # Environment overrides:
 #   PHOTOG_DIR   install directory        (default ~/photog)
 #   PHOTOG_REF   git ref to fetch from    (default main)
-#   PHOTOG_TAG   image tag to run         (default 0.1.3)
+#   PHOTOG_TAG   image tag to run         (default 0.1.4)
 #   PHX_HOST     hostname to serve at     (default <hostname>.local, or localhost)
 #
 # It configures and then stops. It does not start the stack: on a machine with
@@ -29,7 +29,7 @@ set -euo pipefail
 
 PHOTOG_DIR="${PHOTOG_DIR:-$HOME/photog}"
 PHOTOG_REF="${PHOTOG_REF:-main}"
-PHOTOG_TAG="${PHOTOG_TAG:-0.1.3}"
+PHOTOG_TAG="${PHOTOG_TAG:-0.1.4}"
 RAW="https://raw.githubusercontent.com/unsilo/photog-docker/${PHOTOG_REF}"
 
 say()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
@@ -296,8 +296,8 @@ else
 #   CPU captioning         docker-compose.yml:docker-compose.python.yml
 #   both                   docker-compose.yml:docker-compose.hailo.yml:docker-compose.python.yml
 #
-# The Hailo overlay also needs the values scripts/hailo-detect.sh prints, and
-# the moondream overlay needs PHOTOG_PYTHON_TAG. See .env.example.
+# The Hailo overlay also needs the values scripts/hailo-detect.sh prints. The
+# moondream overlay needs nothing else — it derives its tag from PHOTOG_TAG.
 COMPOSE_FILE=docker-compose.yml
 
 PHX_HOST=${host}
@@ -399,7 +399,6 @@ else
   echo "  to COMPOSE_FILE in .env first:"
   echo
   echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.python.yml"
-  echo "    PHOTOG_PYTHON_TAG=0.1.3-python"
 fi
 
 import_dir="$(grep -E '^PHOTOG_IMPORT_PATH=' .env | head -1 | cut -d= -f2- || true)"

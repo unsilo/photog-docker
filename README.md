@@ -1,28 +1,15 @@
 # Photog
 
-Photog is a self-hosted photo archiving and organising app. It automatically
-organises your digital images and lets you search them by date, location,
-dominant colour, or anything else recorded in the EXIF data.
+Photog is a self-contained photo archiving and organising app in the true spirit of the Unsilo project. It can collect and analyze your photos, run local geolocating services and perform edge AI classifications and descrptions without any cloud interacitons at all.
 
-Photog is good at organising folders of photos, and it really shines alongside
-the companion macOS, iOS and tvOS apps. The macOS app archives everything in
-your Photos library. The tvOS app turns any album into a slideshow. No cloud
-account, no upload — all of it over your own local network.
+Companion apps for macOS, iOS and tvOS apps let you backup and organize your Photo Stream and cache your albums on device, letting you view them outside your home network.
 
-Photog also does AI classification, either in software or accelerated by a
-Hailo-8 or Hailo-10H card. Whether your photos are in a Photos library, on a USB
-drive or on a DVD, it sorts them into albums, tags, ratings, smart albums, EXIF
-and thumbnails, and serves them on your own network. Nothing leaves the machine
-it runs on.
-
-The supported way to run it is Docker Compose. What follows works from a fresh
-install of Debian Trixie or Raspberry Pi OS.
+Photog can tag images with the country, state and place name using an images geolocation info via a local copy of the Geonames database for speed and security. It uses the latest edge AI models to classify and describe your images, all local to the device, no cloud upload or account needed.
 
 
 ## Quick start
 
 ### 1. Update and Install Docker
-
 ```bash
 sudo apt update && sudo apt full-upgrade -y
 sudo reboot
@@ -32,63 +19,25 @@ sudo usermod -aG docker $USER && newgrp docker
 ```
 
 ### 2. Install the Hailo software — optional
+Only if you have a Hailo card and want to utilize it. Skip to step 3 otherwise. In that case see [docs/hailo.md](docs/hailo.md).
 
-Only if you have a Hailo card and want to utilize it. Skip to step 3 otherwise.
-Set up the toolchain.
-
-**Set up the build toolchain**:
-
-```bash
-sudo apt install -y dkms build-essential "linux-headers-$(uname -r)"
-ls -d /lib/modules/$(uname -r)/build      # must exist — this is the real check
-```
-
-**Hailo-8 (AI HAT+)** — accelerates classification, cannot do descriptions:
-
-```bash
-sudo apt install hailo-all
-sudo reboot
-```
-
-**Hailo-10H (AI HAT+ 2)** — accelerates both:
-
-```bash
-sudo apt install hailo-h10-all
-sudo reboot
-```
-
-After the reboot, check the card is alive before going further:
-
-```bash
-hailortcli fw-control identify
-```
-
-That should print the device architecture. If it doesn't, fix it now — see
-[docs/hailo.md](docs/hailo.md). Nothing in a container can install a kernel
-driver for you.
-
-On a **Hailo-10H** this leaves you on HailoRT **5.1.1**, which accelerates
-classification but cannot do descriptions. Follow these instructions [docs/upgrade_hailo.md](docs/upgrade_hailo.md) to enable acccelerated descriptions.
 
 ### 3. Install Photog
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/unsilo/photog-docker/main/install.sh | bash
 ```
 
-Answer the prompts: where your photos should live, and an admin email and
-password.
+Answer the prompts: where your photos should live, and an admin email and password.
 
-That creates `~/photog`, fetches the compose files, creates your data
-directories and generates the secrets. **It does not start anything** — it
-finishes by printing the exact command to run next.
+That creates a folder at `~/photog`, fetches the compose files, creates your data directories, generates secrets and places it in the `.env` file.
 
 ### 4. Set up the accelerator — Hailo only
+On a **Hailo-10H** The `hailo-h10-all` install leaves you on HailoRT **5.1.1**, which accelerates classification but cannot do descriptions. Follow these instructions [docs/upgrade_hailo.md](docs/upgrade_hailo.md) to enable acccelerated descriptions.
 
+Run the following commands to scan for your Hailo card and append the relevant informaiton to your `.env` file.
 ```bash
 cd ~/photog
 ./scripts/hailo-detect.sh --append   # writes the device settings into .env
-./scripts/download-models.sh         # fetches the .hef model files
 ```
 
 `hailo-detect.sh` inspects the card and writes the device node, group id and
@@ -96,15 +45,19 @@ library paths into `.env` — none of which can be known before the hardware is
 looked at. It also **sets `COMPOSE_FILE`** to match what it found, so step 5 is
 usually already done:
 
-| What it finds | What it sets |
-|---|---|
-| Hailo-10H | `docker-compose.yml:docker-compose.hailo.yml` |
-| Hailo-8 | `…:docker-compose.hailo.yml:docker-compose.python.yml` (+ `PHOTOG_PYTHON_TAG`) |
-| no card | `docker-compose.yml` |
+| Card | Classifications | Descripitons | COMPOSE_FILE value |
+|---|---|---|---|
+| Hailo-10H | accelerated | accelerated | `docker-compose.yml:docker-compose.hailo.yml` |
+| Hailo-8 | accelerated | software(default) | `docker-compose.yml:docker-compose.hailo.yml:docker-compose.python.yml` |
+| Hailo-8 | accelerated | none | `docker-compose.yml:docker-compose.hailo.yml` |
+| no card | software | software | `docker-compose.yml` |
 
-The Hailo-8 line assumes you want descriptions, since that card cannot produce
-them itself. The script prints how to drop the extra overlay if you would rather
-have the smaller image.
+
+Then run 
+```bash
+cd ~/photog
+./scripts/download-models.sh         # fetches the .hef model files
+```
 
 `download-models.sh` fetches all three models by default, and the captioning one
 is ~3 GB. Skip it with `--vision-only` — on a Hailo-8 it cannot be used anyway.
@@ -179,9 +132,9 @@ Photog does two separate AI jobs, and what you get depends on your hardware.
 | **Hailo-10H** (AI HAT+ 2) | **accelerated** | **accelerated** *(qwen2 — ~12 s/photo)* | `docker-compose.yml:docker-compose.hailo.yml` |
 
 Put that line in `.env` and every `docker compose` command picks it up — no `-f`
-flags to remember. The rows using `docker-compose.python.yml` also need
-`PHOTOG_PYTHON_TAG=0.1.3-python`, because software descriptions need a larger
-image that bundles a Python environment.
+flags to remember. The rows using `docker-compose.python.yml` pull a larger
+`-python` image that bundles the Python environment software descriptions need;
+the overlay derives that tag from `PHOTOG_TAG`, so there is nothing else to set.
 
 Three things worth knowing before you choose:
 
