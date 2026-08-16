@@ -1,14 +1,18 @@
 # Photog
 
-Photog is a self-contained photo archiving and organising app in the true spirit of the Unsilo project. It can collect and analyze your photos, run local geolocating services and perform edge AI classifications and descrptions without any cloud interacitons at all.
+Photog is a self-contained photo archiving and organising app in the true spirit of the Unsilo project. It can collect and analyze your photos, run local geolocating services and perform edge AI classifications and descrptions without any cloud involvement.
 
-Companion apps for macOS, iOS and tvOS apps let you backup and organize your Photo Stream and cache your albums on device, letting you view them outside your home network.
+Companion apps for macOS, iOS and tvOS apps let you backup and organize your Photo Stream and cache your albums on device, letting you view them outside your home network without opening a network port.
 
-Photog can tag images with the country, state and place name using an images geolocation info via a local copy of the Geonames database for speed and security. It uses the latest edge AI models to classify and describe your images, all local to the device, no cloud upload or account needed.
+Photog can tag images with the country, state and place name using an images geolocation info via a local copy of the Geonames database for speed and security. It uses the latest edge AI models to classify and describe your images, all local to the device; no cloud upload or account needed.
 
+```
+Currently the only deployment is through Docker Hub. The source code is not OSS, but could be if there is enough interest. Access to the companion apps is only through Testflight.
+
+Contact me if you'd like to be included. 
+```
 
 ## Quick start
-
 ### 1. Update and Install Docker
 ```bash
 sudo apt update && sudo apt full-upgrade -y
