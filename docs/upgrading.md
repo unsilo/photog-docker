@@ -4,13 +4,46 @@
 
 ```bash
 cd ~/photog
+./scripts/update-photog
+```
+
+That is the whole thing, and it is the recommended path. It backs up the
+database, takes the current compose files and scripts, checks your `.env` against
+what this release expects, pulls, restarts, waits for the app to report healthy,
+and prints what is switched on.
+
+```bash
+./scripts/update-photog --check       # say what would change, write nothing
+./scripts/update-photog 0.1.6         # pin PHOTOG_TAG to a version and go
+./scripts/update-photog --no-backup   # skip the pg_dump
+```
+
+It needs no `-f` flags and no knowledge of which overlays you run — it reads
+`COMPOSE_FILE` from your `.env` like every other command in these docs.
+
+If `scripts/update-photog` is not there, your install predates it. Take it once
+by hand and it keeps itself current after that:
+
+```bash
+cd ~/photog && mkdir -p scripts
+curl -fsSL https://raw.githubusercontent.com/unsilo/photog-docker/main/scripts/update-photog \
+  -o scripts/update-photog && chmod +x scripts/update-photog
+```
+
+### By hand
+
+Nothing here is wrong; it is the same steps without the checks.
+
+```bash
+cd ~/photog
 docker compose pull
 docker compose up -d
 ```
 
 Migrations run automatically on boot and are idempotent. Volumes survive.
 
-With the Hailo overlay, both `-f` flags are needed every time:
+If `COMPOSE_FILE` is not set in `.env`, every command needs its `-f` flags
+spelled out every time:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.hailo.yml pull
@@ -40,6 +73,31 @@ docker compose up -d
 
 Re-running `install.sh` does the same thing and leaves an existing `.env`
 untouched.
+
+**This is not cosmetic.** Compose only passes through environment variables that
+appear in a service's `environment:` block, so a setting introduced by a release
+does nothing at all until you take the compose file that mentions it —
+regardless of what your `.env` says. `PHOTOG_LOAD_GAZETTEER` is the current
+example: it was documented before the compose file carried it.
+
+### The gazetteer needs nothing
+
+Local reverse geocoding survives upgrades untouched. The places are rows in
+Postgres and the downloaded dumps live in `/app_cache/geonames`, which is the
+`photog-cache` volume; neither is in the image. `PHOTOG_LOAD_GAZETTEER=true`
+stays safe to leave set, because the loader checks the table before downloading
+anything.
+
+Worth one command after any upgrade, though:
+
+```bash
+docker compose exec photog /app/bin/pho_tog eval 'PhoTog.Geo.Diagnostics.print()'
+```
+
+Early versions shipped a shared geonames.org account compiled into the image.
+That is gone. An install that used to get place tags with no configuration now
+gets none, and the only symptom is new photos quietly landing in Unlocated — so
+if this reports `mode NONE`, see [geonames.md](geonames.md).
 
 ### Back out of an upgrade
 

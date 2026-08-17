@@ -120,25 +120,50 @@ services:
       # Port.open/2 does no PATH lookup of its own.
       PHOTOG_PYTHON: /usr/bin/python3
 
-      # Escape hatch for a bad migration: start the app without running
-      # PhoTog.Release.setup() so you can get a shell.
-      # Reverse geocoding: turns a photo's GPS coordinates into country, state
-      # and place tags. OFF unless you supply an account, because it is an
-      # online lookup against geonames.org and the account has to be yours.
+      # Reverse geocoding turns a photo's GPS coordinates into country, state
+      # and place tags. There are TWO sources, both optional and neither
+      # implying the other. With neither, photos still import and still keep
+      # their GPS EXIF — they get no place tags and wait in Unlocated.
+      # See docs/geonames.md.
+
+      # SOURCE 1: a local copy of the GeoNames gazetteer. No account, no quota,
+      # and no coordinates leaving the machine. Costs a ~15 MB download and
+      # ~185k rows the first time it is switched on.
+      #
+      # Off by default on purpose: creating a container is not consent to fetch
+      # 15 MB. Set it true and the next boot builds it — which is the one boot
+      # that can take minutes, and what the healthcheck's 300s start period is
+      # there to cover.
+      #
+      # Safe to leave true forever. PhoTog.Geo.Import.ensure_loaded/1 checks the
+      # table before downloading, so every boot after the first is one query.
+      # To build it without restarting:
+      #
+      #   docker compose exec photog /app/bin/pho_tog eval 'PhoTog.Release.load_gazetteer()'
+      #
+      # Loading it does NOT place photos already imported: geocoding runs on
+      # import. Push the backlog from the Repairs panel's Unlocated entry.
+      PHOTOG_LOAD_GAZETTEER: ${PHOTOG_LOAD_GAZETTEER:-false}
+
+      # SOURCE 2: the geonames.org web service. Off unless you supply an
+      # account, because the account has to be yours — this is an online lookup
+      # and the quota is per username.
       #
       # Free: register at https://www.geonames.org/login, then enable the
       # username for the free web services on your account page — a fresh
       # account is NOT enabled until you tick that box, and until you do every
       # lookup is rejected.
       #
-      # Unset, photos still import and still keep their GPS EXIF. They get no
-      # place tags and can be placed by hand.
+      # Set alongside the gazetteer it becomes a fallback for coordinates the
+      # local data cannot place, rather than the primary source.
       PHOTOG_GEONAMES_USERNAME: ${PHOTOG_GEONAMES_USERNAME:-}
       PHOTOG_GEONAMES_LANGUAGE: ${PHOTOG_GEONAMES_LANGUAGE:-en}
       # Only for the commercial endpoint (https://secure.geonames.net). Leave
       # blank for the free service.
       PHOTOG_GEONAMES_BASE_URL: ${PHOTOG_GEONAMES_BASE_URL:-}
 
+      # Escape hatch for a bad migration: start the app without running
+      # PhoTog.Release.setup() so you can get a shell.
       PHOTOG_SKIP_MIGRATIONS: ${PHOTOG_SKIP_MIGRATIONS:-false}
 
       # A Pi 5 has 4 cores, and Postgres is competing for the same ones. 10 (the

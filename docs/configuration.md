@@ -24,20 +24,27 @@ Colon-separated list of compose files to layer, read by Compose itself. This is
 the one variable that decides *which* Photog you are running, and it is the
 reason none of the commands in these docs need `-f` flags.
 
+There are two values:
+
 ```
 COMPOSE_FILE=docker-compose.yml
 COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml
-COMPOSE_FILE=docker-compose.yml:docker-compose.python.yml
-COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml:docker-compose.python.yml
 ```
 
-`install.sh` writes the first form. After that you rarely set this by hand:
-`scripts/hailo-detect.sh --append` derives it from the hardware it finds — the
-Hailo overlay on a Hailo-10H, Hailo plus Python on a Hailo-8 (that card cannot
-caption, so Moondream on the CPU is the only route), and the base file alone on
-a machine with no accelerator. It replaces the existing line rather than adding
-a second, so re-running it after a hardware change is safe. The README's table
-says what each combination gives you.
+`install.sh` writes the first. After that you rarely set this by hand:
+`scripts/env-detect.sh --append` derives it from the hardware it finds — the
+Hailo overlay if there is a usable card of either generation, the base file alone
+if there is not. It replaces the existing line rather than adding a second, so
+re-running it after a hardware change is safe.
+
+**This variable answers one question: is there a Hailo card?** It used to answer
+two. Up to 0.1.4 a third overlay, `docker-compose.python.yml`, selected a larger
+`-python` image, because Moondream's Python environment was only in that image
+and a Hailo-8 needed Moondream to caption at all. The environment is built on
+first enable now, so every image can do descriptions and the choice moved to the
+Classifiers page where it belongs. That overlay is still in the repo for installs
+that cannot reach PyPI when somebody ticks the box; nothing publishes the tag it
+selects, so `pull` with it in `COMPOSE_FILE` fails with `manifest unknown`.
 
 Rules worth knowing:
 
@@ -296,9 +303,8 @@ Image tag to run. `0.1.4` pins it; `latest` tracks the newest release.
 Pin it. It turns upgrading into a decision rather than a side effect of
 `docker compose pull`.
 
-It covers the `-python` variant too: `docker-compose.python.yml` appends
-`-python` to this value rather than taking a tag of its own, so the two images
-cannot drift apart.
+One image, one tag. There was a `-python` variant up to 0.1.4, whose tag was
+derived from this one; it is no longer published — see `COMPOSE_FILE` above.
 
 ### `PHOTOG_ALLOW_REGISTRATION`
 
@@ -365,7 +371,7 @@ that does not exist.
 
 ## Hailo
 
-Only used with `docker-compose.hailo.yml`. Run `./scripts/hailo-detect.sh` on
+Only used with `docker-compose.hailo.yml`. Run `./scripts/env-detect.sh` on
 the host; it prints these filled in. Full explanation in
 [hailo.md](hailo.md).
 

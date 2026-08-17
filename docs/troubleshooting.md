@@ -323,10 +323,9 @@ Expect a `huggingface/` subdirectory to appear alongside your `.hef` files. That
 is correct, if untidy — it means the weights persist across `down -v` instead of
 being re-downloaded.
 
-Note this is a different cache from Moondream's, which
-`docker-compose.python.yml` points at `/app_cache/huggingface` via `HF_HOME`.
-One is Elixir-side (bumblebee), the other Python-side (`hf_hub_download`), and
-they do not share.
+Note this is a different cache from Moondream's, which the image points at
+`/app_cache/huggingface` via `HF_HOME`. One is Elixir-side (bumblebee), the other
+Python-side (`hf_hub_download`), and they do not share.
 
 ---
 

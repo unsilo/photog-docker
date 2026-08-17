@@ -108,7 +108,7 @@ container's interpreter.
 | Raspberry Pi OS **Bookworm** | 3.11 | **no** — import fails |
 | Debian 13 / Ubuntu 25.04+ | 3.13 | probably |
 
-`scripts/hailo-detect.sh` checks this for you.
+`scripts/env-detect.sh` checks this for you.
 
 If you are on Bookworm, the options today are: upgrade the host to Trixie
 (which also moves you onto the current Hailo packages), or run Photog on bare
@@ -184,7 +184,7 @@ are reading advice for the other card.
 From your Photog directory:
 
 ```bash
-./scripts/hailo-detect.sh
+./scripts/env-detect.sh
 ```
 
 It reports on the device, the bindings, the library and the Python version
@@ -403,11 +403,13 @@ COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml
 Then plain `docker compose up -d` and `docker compose logs -f photog` do the
 right thing.
 
-`hailo-detect.sh --append` sets this for you, from what it found: the hailo
-overlay alone on a Hailo-10H, and hailo plus `docker-compose.python.yml` on a
-Hailo-8 — because that card cannot caption and Moondream on the CPU is the only
-way to get descriptions. It replaces any existing `COMPOSE_FILE` line rather
-than adding a second one, so re-running it after a hardware change is safe.
+`env-detect.sh --append` sets this for you: the hailo overlay if it found a
+usable card of either generation, the base file alone if it did not. It replaces
+any existing `COMPOSE_FILE` line rather than adding a second one, so re-running
+it after a hardware change is safe.
+
+It used to add a third overlay on a Hailo-8, for captioning. It does not any
+more — see below.
 
 Check the bindings actually loaded:
 
@@ -457,7 +459,7 @@ docker compose exec photog ls -l /opt/hailo/lib/
 docker compose exec photog printenv LD_LIBRARY_PATH
 ```
 
-Re-run `scripts/hailo-detect.sh`; it reads the soname out of the binding's own
+Re-run `scripts/env-detect.sh`; it reads the soname out of the binding's own
 ELF headers rather than guessing.
 
 ### `ImportError: undefined symbol: ...`
@@ -598,7 +600,7 @@ If those disagree, that is the whole answer, and there is a script for it:
 See [Upgrading to HailoRT 5.3.0](#upgrading-to-hailort-530) below — it is not a
 routine `apt upgrade` and there are things you give up.
 
-**Then re-run `scripts/hailo-detect.sh` — see below.**
+**Then re-run `scripts/env-detect.sh` — see below.**
 
 **3. Not a Hailo-10H.** Captioning needs one. On a Hailo-8 there is nothing to
 fix.
@@ -617,7 +619,7 @@ confusing error about a file that is right there.
 ```bash
 cd ~/photog
 # remove the old HAILO_GID / HAILO_PYTHON_PACKAGE / HAILORT_* lines from .env
-./scripts/hailo-detect.sh --append
+./scripts/env-detect.sh --append
 docker compose -f docker-compose.yml -f docker-compose.hailo.yml up -d
 ```
 
@@ -649,49 +651,59 @@ loads are Hailo-10H builds. Do not run `upgrade-hailort.sh` hoping to get there
 the Pi's CPU, entirely independent of the accelerator, so your Hailo-8 keeps
 doing detection and classification while the CPU does captions.
 
-It needs the `-python` image, because its Python environment is ~350 MB and the
-default image deletes it at build time. The overlay selects that image itself —
-it appends `-python` to whatever `PHOTOG_TAG` is set to, so adding the overlay
-is the whole change:
+**Nothing to change in compose.** Enable **moondream** at `/classifier` — not
+qwen2 — and that is the whole procedure. Up to 0.1.4 this needed a
+`docker-compose.python.yml` overlay and a larger `-python` image, because
+Moondream's ~350 MB Python environment existed only in that image. It is now
+built on demand: the default image carries the environment's `pyproject.toml`
+and `uv.lock` plus `uv`, and the first enable builds it.
 
-```bash
-cd ~/photog
+That first enable takes a while and needs the internet. The classifier row shows
+each stage while it works:
 
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.hailo.yml \
-  -f docker-compose.python.yml up -d
+```
+Preparing the Python environment (step 1 of 3) — fetching the interpreter…
+Preparing the Python environment (step 2 of 3) — installing packages.
+Downloading and loading the model (step 3 of 3).
 ```
 
-Then enable **moondream** at `/classifier` — not qwen2.
-
-First caption after a fresh start is slow and that is expected: it downloads the
-weights from Hugging Face and loads the model. The log narrates it:
+and the log narrates the same thing:
 
 ```
 MoondreamServer: starting Python environment and loading model
+PythonEnv: uv sync --no-dev
 MoondreamServer: model ready
 ```
 
-The overlay sets `HF_HOME=/app_cache/huggingface` so the weights land on a
-volume. Without that they go under `$HOME` on the container's writable layer and
-are re-downloaded every time the container is recreated — which presents as a
-mysteriously slow first caption after every `up -d`.
+Later starts skip all of it — the environment is on disk and the weights are in
+`/app_cache/huggingface`, which is a volume, so neither survives being asked for
+twice.
 
 ### If Moondream fails with `:enoent` and `{:spawn_executable, nil}`
 
-You are on the default image, not the `-python` one. Snex looked for its
-interpreter at
+Snex looked for its interpreter at
 
 ```
-/app/snex/projects/Elixir.PhoTog.Classifications.MoondreamInterpreter/venv/bin
+/app/snex/projects/Elixir.PhoTog.Classifications.MoondreamInterpreter/venv/bin/python
 ```
 
-found nothing, and passed `nil` to `open_port`. Confirm and fix:
+found nothing, and passed `nil` to `open_port`. On 0.1.4 that meant you were on
+the default image rather than the `-python` one, and the fix was to change
+images. From 0.1.5 the environment builds itself, so this error means the build
+did not happen or could not — and the row's `load_error` says which. Check:
 
 ```bash
-docker compose exec photog ls -la /app/snex     # "no such file" = wrong image
+# is the scaffolding there? pyproject.toml and uv.lock, no venv yet is normal
+docker compose exec photog ls -la /app/snex/projects/*/
+
+# is uv there?
+docker compose exec photog uv --version
 ```
+
+Most likely causes, in order: no route to PyPI or python-build-standalone when
+the box was ticked; a container with no writable space left; or an image built
+before 0.1.5, where nothing can rebuild the environment because the
+`pyproject.toml` was deleted along with the venv.
 
 `PHOTOG_PYTHON` is unrelated — that points the *Hailo* workers at an
 interpreter. Moondream manages its own.
@@ -827,7 +839,7 @@ sudo dmesg | grep -i 'device created'
 HAILO_DEVICE=/dev/h1x-0
 ```
 
-`hailo-detect.sh` searches all the known names and writes this for you. The
+`env-detect.sh` searches all the known names and writes this for you. The
 overlay defaults to `/dev/hailo0` when it is unset, which covers 4.x and 5.1.1.
 
 ### The device node is gone after the upgrade

@@ -20,7 +20,7 @@
 #   PHX_HOST     hostname to serve at     (default <hostname>.local, or localhost)
 #
 # It configures and then stops. It does not start the stack: on a machine with
-# an accelerator, starting before scripts/hailo-detect.sh has run produces a
+# an accelerator, starting before scripts/env-detect.sh has run produces a
 # container with no device and an empty models directory, which looks like a
 # working install that cannot classify anything. The last thing it prints is
 # the exact command to run next.
@@ -151,29 +151,46 @@ for f in docker-compose.yml docker-compose.hailo.yml docker-compose.python.yml n
   mv "${f}.tmp" "${f}"
 done
 
-# docker-compose.moondream.yml was renamed to docker-compose.python.yml — the
-# overlay selects the `-python` image, and Moondream is one thing that image
-# happens to carry. Left in place the stale file is harmless until someone's
-# COMPOSE_FILE still names it, at which point they are running an overlay that
-# no longer receives fixes.
+# docker-compose.moondream.yml was renamed to docker-compose.python.yml. Left in
+# place the stale file is harmless until someone's COMPOSE_FILE still names it,
+# at which point they are running an overlay that no longer receives fixes.
 if [[ -f docker-compose.moondream.yml ]]; then
   rm -f docker-compose.moondream.yml
-  say "removed docker-compose.moondream.yml (renamed to docker-compose.python.yml)"
-  if [[ -f .env ]] && grep -q 'docker-compose\.moondream\.yml' .env; then
-    warn "your .env still names docker-compose.moondream.yml in COMPOSE_FILE."
-    warn "  Change it to docker-compose.python.yml before starting."
-  fi
+  say "removed docker-compose.moondream.yml (superseded)"
+fi
+
+# Neither captioning overlay is needed any more: Moondream builds its Python
+# environment on first enable, so the default image can do descriptions and the
+# `-python` tag these overlays select is no longer published. An upgrader whose
+# COMPOSE_FILE still names one would get "manifest unknown" from the next
+# `pull`, which reads as a broken registry rather than a stale setting — so say
+# so plainly instead of leaving them to find out.
+if [[ -f .env ]] && grep -qE 'docker-compose\.(python|moondream)\.yml' .env; then
+  warn "your .env names a captioning overlay in COMPOSE_FILE."
+  warn "  It selects an image tag that is no longer published, so \`pull\` will fail."
+  warn "  Remove it: COMPOSE_FILE=docker-compose.yml (plus the hailo overlay if you"
+  warn "  have a card). Descriptions still work — enable Moondream in the UI."
 fi
 
 mkdir -p scripts
-for s in hailo-detect.sh download-models.sh upgrade-hailort.sh rollback-hailort.sh; do
+for s in env-detect.sh update-photog download-models.sh upgrade-hailort.sh rollback-hailort.sh; do
   if curl -fsSL "${RAW}/scripts/${s}" -o "scripts/${s}" 2>/dev/null; then
     chmod +x "scripts/${s}"
   else
     rm -f "scripts/${s}"
-    warn "could not fetch scripts/${s} (only needed for Hailo setups)"
+    warn "could not fetch scripts/${s}"
   fi
 done
+
+# hailo-detect.sh became env-detect.sh: same job, but it also writes defaults for
+# capabilities that have nothing to do with the accelerator, so the name was
+# actively misleading about where to add the next one. Left on disk the old copy
+# keeps working for a while and then quietly stops matching the docs, which is
+# the worst of both.
+if [[ -f scripts/hailo-detect.sh ]]; then
+  rm -f scripts/hailo-detect.sh
+  say "removed scripts/hailo-detect.sh (now scripts/env-detect.sh)"
+fi
 
 # --- .env ------------------------------------------------------------------
 
@@ -290,14 +307,14 @@ else
 
 # Which compose files to use. Compose reads this from .env, so every
 # \`docker compose\` command in this directory picks them up with no -f flags.
-# Add overlays here rather than typing them each time:
+# There is one overlay worth adding, and only if you have a Hailo card:
 #
 #   Hailo accelerator      docker-compose.yml:docker-compose.hailo.yml
-#   CPU captioning         docker-compose.yml:docker-compose.python.yml
-#   both                   docker-compose.yml:docker-compose.hailo.yml:docker-compose.python.yml
 #
-# The Hailo overlay also needs the values scripts/hailo-detect.sh prints. The
-# moondream overlay needs nothing else — it derives its tag from PHOTOG_TAG.
+# It also needs the values scripts/env-detect.sh prints.
+#
+# Image descriptions are NOT a compose choice — every image can caption, and the
+# environment for it is built the first time you enable the classifier.
 COMPOSE_FILE=docker-compose.yml
 
 PHX_HOST=${host}
@@ -347,7 +364,7 @@ PORT_EFFECTIVE="${PORT_EFFECTIVE:-80}"
 # The first thing the user sees would be an install that appears to work and
 # quietly cannot classify anything.
 #
-# Hailo setup also has to come first in the other direction: hailo-detect.sh
+# Hailo setup also has to come first in the other direction: env-detect.sh
 # reads the device to write HAILO_DEVICE, HAILO_GID and the libhailort soname,
 # and none of that can be known before the hardware is inspected.
 #
@@ -378,10 +395,10 @@ if [[ "$have_hailo" == "1" ]]; then
   echo "  A Hailo accelerator is present (${hailo_nodes[0]}). Set it up before starting:"
   echo
   echo "    cd ${PHOTOG_DIR}"
-  echo "    ./scripts/hailo-detect.sh --append    # writes the device settings to .env"
+  echo "    ./scripts/env-detect.sh --append    # writes the device settings to .env"
   echo "    ./scripts/download-models.sh          # fetches the .hef model files"
   echo
-  echo "  Then add the overlay to COMPOSE_FILE in .env — hailo-detect.sh prints"
+  echo "  Then add the overlay to COMPOSE_FILE in .env — env-detect.sh prints"
   echo "  the exact line for your hardware, including the captioning options:"
   echo
   echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml"
@@ -395,10 +412,10 @@ else
   echo "    cd ${PHOTOG_DIR}"
   echo "    docker compose up -d"
   echo
-  echo "  For image descriptions without an accelerator, add the CPU captioner"
-  echo "  to COMPOSE_FILE in .env first:"
-  echo
-  echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.python.yml"
+  echo "  Classification and image descriptions both work without an"
+  echo "  accelerator, on the CPU. Enable them on the Classifiers page; the"
+  echo "  first enable of Moondream builds its Python environment, which takes"
+  echo "  a few minutes once."
 fi
 
 import_dir="$(grep -E '^PHOTOG_IMPORT_PATH=' .env | head -1 | cut -d= -f2- || true)"
@@ -412,4 +429,10 @@ echo "  log in with          the admin email and password in ${PHOTOG_DIR}/.env"
 echo "  photos to import ->  ${import_dir:-${PHOTOG_DIR}/import}"
 echo "  logs             ->  cd ${PHOTOG_DIR} && docker compose logs -f photog"
 echo "  stop             ->  cd ${PHOTOG_DIR} && docker compose down"
+echo "  update later     ->  cd ${PHOTOG_DIR} && ./scripts/update-photog"
+printf '\n'
+echo "  update-photog backs up the database, takes the current compose files,"
+echo "  pulls and restarts, then checks it came back. Use it rather than a bare"
+echo "  \`docker compose pull\` — a release can change the compose file, and"
+echo "  Compose ignores settings the file on your disk does not mention."
 printf '\n'

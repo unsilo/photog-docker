@@ -35,26 +35,64 @@ Answer the prompts: where your photos should live, and an admin email and passwo
 
 That creates a folder at `~/photog`, fetches the compose files, creates your data directories, generates secrets and places it in the `.env` file.
 
-### 4. Set up the accelerator — Hailo only
-On a **Hailo-10H** The `hailo-h10-all` install leaves you on HailoRT **5.1.1**, which accelerates classification but cannot do descriptions. Follow these instructions [docs/upgrade_hailo.md](docs/upgrade_hailo.md) to enable acccelerated descriptions.
+### 4. Final feature choices
 
-Run the following commands to scan for your Hailo card and append the relevant informaiton to your `.env` file.
-```bash
-cd ~/photog
-./scripts/hailo-detect.sh --append   # writes the device settings into .env
+One thing is worth deciding on now. Everything else is a checkbox in the app
+later.
+
+**Image descriptions need no decision here.** Every image can caption, on the
+CPU, with no accelerator — enable `moondream` on the Classifiers page and the
+first enable builds the Python environment it needs. That takes a few minutes
+once and the page tells you what it is doing. There is no separate image and no
+compose overlay. (`docker-compose.python.yml` still exists for installs that
+cannot reach the internet; read its header before using it.)
+
+**Place tags from GPS coordinates.** Two sources, and you pick one — or neither,
+in which case photos still import and keep their GPS EXIF, they just get no
+place tags.
+
+```
+# local: no account, nothing leaves the machine, ~15 MB and ~185k rows
+PHOTOG_LOAD_GAZETTEER=true
+
+# or online: needs a free geonames.org account, enabled for web services
+PHOTOG_GEONAMES_USERNAME=your-account
 ```
 
-`hailo-detect.sh` inspects the card and writes the device node, group id and
-library paths into `.env` — none of which can be known before the hardware is
-looked at. It also **sets `COMPOSE_FILE`** to match what it found, so step 5 is
-usually already done:
+Set both and the web service becomes a fallback for coordinates the local data
+cannot place. Full detail, including how to load the gazetteer on an install
+that is already running, is in [docs/geonames.md](docs/geonames.md).
 
-| Card | Classifications | Descripitons | COMPOSE_FILE value |
+On a **Hailo-10H**, the `hailo-h10-all` install leaves you on HailoRT **5.1.1**,
+which accelerates classification but cannot do descriptions. Follow
+[docs/upgrade_hailo.md](docs/upgrade_hailo.md) to enable accelerated
+descriptions.
+
+Run the following commands to scan for your Hailo card and append the relevant information to your `.env` file.
+```bash
+cd ~/photog
+./scripts/env-detect.sh --append   # writes the device settings into .env
+```
+
+`env-detect.sh` inspects the machine and writes what only the machine can tell
+you: the Hailo device node, group id and library paths. It also **sets
+`COMPOSE_FILE`** to match what it found, so step 5 is usually already done.
+
+It is safe and useful to re-run at any time — after a hardware change, after a
+HailoRT upgrade, or just to be told what this box can do. It writes nothing
+without `--append`, and it reports on the optional features that need no hardware
+too. (It was called `hailo-detect.sh`; it covers more than Hailo now.)
+
+| Card | Classifications | Descriptions | COMPOSE_FILE value |
 |---|---|---|---|
-| Hailo-10H | accelerated | accelerated | `docker-compose.yml:docker-compose.hailo.yml` |
-| Hailo-8 | accelerated | software(default) | `docker-compose.yml:docker-compose.hailo.yml:docker-compose.python.yml` |
-| Hailo-8 | accelerated | none | `docker-compose.yml:docker-compose.hailo.yml` |
-| no card | software | software | `docker-compose.yml` |
+| Hailo-10H | accelerated | accelerated (qwen2) | `docker-compose.yml:docker-compose.hailo.yml` |
+| Hailo-8 | accelerated | software (moondream) | `docker-compose.yml:docker-compose.hailo.yml` |
+| no card | software | software (moondream) | `docker-compose.yml` |
+
+Two values, not four. Descriptions used to be the third dimension here — a
+Hailo-8 needed a `docker-compose.python.yml` overlay and a larger image to
+caption at all. It does not any more, so which classifier you run is decided in
+the app rather than in `.env`.
 
 
 Then run 
@@ -130,15 +168,18 @@ Photog does two separate AI jobs, and what you get depends on your hardware.
 
 | Your hardware | Classification | Descriptions | `COMPOSE_FILE` |
 |---|---|---|---|
-| No accelerator | software — slow | unavailable | `docker-compose.yml` |
-| No accelerator | software — slow | software — slow *(moondream)* | `docker-compose.yml:docker-compose.python.yml` |
-| **Hailo-8** (AI HAT+) | **accelerated** | software — slow *(moondream)* | `docker-compose.yml:docker-compose.hailo.yml:docker-compose.python.yml` |
+| No accelerator | software — slow | software — slow *(moondream)* | `docker-compose.yml` |
+| **Hailo-8** (AI HAT+) | **accelerated** | software — slow *(moondream)* | `docker-compose.yml:docker-compose.hailo.yml` |
 | **Hailo-10H** (AI HAT+ 2) | **accelerated** | **accelerated** *(qwen2 — ~12 s/photo)* | `docker-compose.yml:docker-compose.hailo.yml` |
 
 Put that line in `.env` and every `docker compose` command picks it up — no `-f`
-flags to remember. The rows using `docker-compose.python.yml` pull a larger
-`-python` image that bundles the Python environment software descriptions need;
-the overlay derives that tag from `PHOTOG_TAG`, so there is nothing else to set.
+flags to remember.
+
+`COMPOSE_FILE` only answers "do I have a Hailo card?". Which classifiers run is
+decided on the Classifiers page, not here. Up to 0.1.4 descriptions were a third
+overlay pulling a larger `-python` image; the Python environment Moondream needs
+is built on first enable now, so every image can caption and that overlay is
+only for installs with no internet access at enable time.
 
 Three things worth knowing before you choose:
 
@@ -265,14 +306,26 @@ itself.
 ```bash
 cd ~/photog
 
+./scripts/update-photog                # upgrade — see below
+./scripts/env-detect.sh                # what can this machine do?
+
 docker compose logs -f photog          # what it is doing
 docker compose ps                      # what is running
 docker compose restart photog          # restart just the app
 docker compose down                    # stop; your data survives
-docker compose pull && docker compose up -d    # upgrade
 ```
 
 With `COMPOSE_FILE` set in `.env`, none of these need `-f` flags.
+
+**Upgrade with `./scripts/update-photog`, not a bare `docker compose pull`.** It
+backs the database up first, takes the current compose files, checks your `.env`
+against what the new release expects, pulls, restarts, and waits for the app to
+come back. The reason it exists rather than being two commands in a doc: a
+release can change `docker-compose.yml`, and Compose only passes through the
+environment variables the file *on your disk* names — so a new setting can be
+documented, shipped and silently doing nothing until that file is refreshed too.
+`--check` shows what it would do and writes nothing. Full detail in
+[docs/upgrading.md](docs/upgrading.md).
 
 `docker compose down -v` deletes the named volumes. With the installer's
 defaults your photos and database are on your own filesystem and survive it, but
@@ -333,7 +386,7 @@ uname -m && docker --version && docker compose version
 ```
 
 and, for anything Hailo-related, the full output of
-`./scripts/hailo-detect.sh`.
+`./scripts/env-detect.sh`.
 
 ---
 

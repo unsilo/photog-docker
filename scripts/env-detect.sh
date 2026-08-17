@@ -1,13 +1,51 @@
 #!/usr/bin/env bash
 #
-# Work out what docker-compose.hailo.yml needs from this host, and print the
-# .env lines to paste. Run it ON THE HOST with the accelerator, not in a
+# Look at this host, work out which of Photog's optional capabilities it can
+# support, and write the .env values they need. Run it ON THE HOST, not in a
 # container.
 #
-#   ./scripts/hailo-detect.sh              # report
-#   ./scripts/hailo-detect.sh --append     # report, then append to ./.env
+#   ./scripts/env-detect.sh              # report only, write nothing
+#   ./scripts/env-detect.sh --append     # report, then update ./.env
 #
-# It checks the four things that have to line up, in the order they fail:
+# Was `hailo-detect.sh`. Renamed because the job is not Hailo-specific: this is
+# the one place that answers "what can this machine do, and what does .env have
+# to say so?", and every capability added from here on belongs in it rather than
+# in a script of its own. Four one-purpose detect scripts would each need their
+# own .env writer, and they would disagree about COMPOSE_FILE.
+#
+# ───────────────────────────────────────────────────────────────────────────────
+# ADDING A CAPABILITY
+#
+# Each capability is a numbered block below. The contract is four things, in this
+# order, and nothing else:
+#
+#   1. DETECT      — look at the host. Set module-level vars, report with
+#                    ok/bad/warn/info. `bad` sets FAILED and means "this machine
+#                    is trying to do the thing and cannot" — not "the thing is
+#                    absent". Absence is `warn` at most, usually nothing.
+#   2. DECIDE      — set a <CAP>_USABLE flag from what you found.
+#   3. CONTRIBUTE  — add your lines to `block`, and your overlay to
+#                    COMPOSE_TARGET if you have one.
+#   4. ADVISE      — print what the operator has to do that this script cannot,
+#                    and only when it applies to them.
+#
+# Rules that come from getting this wrong:
+#
+#   * ABSENT IS NOT BROKEN. Everything in Photog works with no accelerator, no
+#     gazetteer and no captions. A machine with none of them is fully detected,
+#     not failed, and this script exits 0 on it.
+#   * NEVER OVERWRITE A VALUE A HUMAN MAY HAVE TUNED. Detected hardware facts
+#     are written once and left alone (see BLOCK_SKIPPED). Derived values that
+#     follow from the hardware — COMPOSE_FILE — are rewritten every run, because
+#     a stale one is the most common reason a working card goes unused.
+#   * DO NOT ASK. Everything here is derived. A prompt makes this unusable from
+#     install.sh and update-photog, which both call it.
+#   * SAY THE COST OUT LOUD. If enabling something downloads 15 MB or takes ten
+#     minutes on a Pi, that belongs in ADVISE, before the operator commits.
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# CAPABILITY 1 — Hailo accelerator. Checks the four things that have to line up,
+# in the order they fail:
 #
 #   1. the device node exists and is reachable        -> HAILO_GID
 #   2. python can import hailo_platform               -> HAILO_PYTHON_PACKAGE
@@ -18,6 +56,15 @@
 # one CPython minor version, and this overlay runs them inside the container's
 # interpreter. Raspberry Pi OS Trixie and the Photog image are both on Python
 # 3.13; Bookworm is on 3.11 and will not work this way. See docs/hailo.md.
+#
+# CAPABILITY 2 — captioning. Nothing to detect. Moondream runs on any CPU and
+# builds its own Python environment on first enable, so there is no host fact to
+# find and no .env line to write. Recorded here so the next person does not go
+# looking for the block that handles it.
+#
+# CAPABILITY 3 — the local gazetteer. Nothing to detect either: it is one
+# variable and a decision the operator makes, not a property of the machine. It
+# appears in ADVISE only. See docs/geonames.md.
 
 set -uo pipefail
 
@@ -70,8 +117,10 @@ HAILORT_SONAME=""
 DEVICE_GLOBS_DOC='/dev/hailo[0-9]* /dev/h1x-[0-9]* /dev/hailo_chardev[0-9]*'
 
 echo
-echo "Photog — Hailo host detection"
-echo "-----------------------------"
+echo "Photog — host capability detection"
+echo "----------------------------------"
+echo
+echo "Capability 1: Hailo accelerator"
 
 # --- 1. the device ---------------------------------------------------------
 
@@ -258,25 +307,30 @@ else
   info "See docs/hailo.md for what to do instead."
 fi
 
+# ---------------------------------------------------------------------------
+# CAPABILITY 2 and 3 would go here — see the contract in the header. Neither
+# captioning nor the gazetteer has anything to detect on the host, so they only
+# appear in ADVISE below. The next capability that does have a host fact behind
+# it (a GPU, a coral TPU, a specific libvips feature) gets its own DETECT/DECIDE
+# section at this point, and adds to `block` and COMPOSE_TARGET below.
+# ---------------------------------------------------------------------------
+
 # --- what COMPOSE_FILE should be -------------------------------------------
 #
-# Derived, not asked. The rules are the README's hardware table, and there is
-# exactly one right answer per machine:
+# Derived, not asked, and there are only two answers left:
 #
-#   Hailo-10H   hailo overlay           the card captions; nothing else needed
-#   Hailo-8     hailo + python overlay  the card cannot caption, moondream can
-#   no card     base only               everything works, the AI is just slow
+#   any Hailo card   hailo overlay   the card does detection and classification
+#   no card          base only       everything works, the AI is just slow
 #
-# The Hailo-8 default assumes descriptions are wanted, because the alternative
-# is a machine that silently cannot produce any and an operator with no reason
-# to suspect a compose overlay. Dropping the overlay is one edit and is printed
-# below; discovering you needed it is not.
+# There used to be a third: a Hailo-8 also got docker-compose.python.yml,
+# because the card cannot caption and Moondream's Python environment lived only
+# in a separate `-python` image. That image is gone — the environment is built on
+# first enable now — so captioning is a checkbox rather than a compose decision,
+# and this script has no business having an opinion about it.
 HAILO_USABLE=0
 [[ -n "$HAILO_GID$HAILO_PYTHON_PACKAGE$HAILORT_LIB" ]] && HAILO_USABLE=1
 
-if [[ $HAILO_USABLE -eq 1 && "$DEVICE_ARCH_HINT" == "hailo8" ]]; then
-  COMPOSE_TARGET="docker-compose.yml:docker-compose.hailo.yml:docker-compose.python.yml"
-elif [[ $HAILO_USABLE -eq 1 ]]; then
+if [[ $HAILO_USABLE -eq 1 ]]; then
   COMPOSE_TARGET="docker-compose.yml:docker-compose.hailo.yml"
 else
   COMPOSE_TARGET="docker-compose.yml"
@@ -327,21 +381,29 @@ if [[ $HAILO_USABLE -eq 0 ]]; then
   fi
   echo
   echo "  ---------------------------------------------------------------"
-  echo "  WANT IMAGE DESCRIPTIONS? One more line and no hardware."
+  echo "  WANT IMAGE DESCRIPTIONS? No hardware and no compose changes."
   echo
-  echo "  Moondream is a 0.5B model that runs on the CPU. On a Pi it takes"
-  echo "  the better part of a minute per photo, which is fine for a library"
-  echo "  chewed through overnight and painful if you are watching it:"
+  echo "  Enable 'moondream' at /classifier. The first enable builds its"
+  echo "  Python environment, which takes a few minutes and needs the"
+  echo "  internet; the page shows what it is doing while it works."
   echo
-  echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.python.yml"
-  echo
-  echo "  That one line is all it takes: the overlay selects the -python image,"
-  echo "  which is the only one carrying Moondream's Python environment. Then"
-  echo "  enable 'moondream' at /classifier."
+  echo "  Moondream is a 0.5B model on the CPU: the better part of a minute"
+  echo "  per photo on a Pi. Fine for a library chewed through overnight,"
+  echo "  painful if you are watching it."
   echo "  ---------------------------------------------------------------"
   echo
   echo "If you DO have a card, fix the failures above and run this again."
-  exit 1
+  echo
+
+  # Exit 0. This used to exit 1, from when the script was hailo-detect.sh and a
+  # missing card was the one thing it looked for. A machine with no accelerator
+  # is a fully detected machine, not a failed detection — everything in Photog
+  # runs on it — and install.sh and update-photog both call this under `set -e`,
+  # where a non-zero exit would abort an install that is going fine.
+  #
+  # A genuine failure still exits 1: that is FAILED, set by `bad` further up,
+  # which only fires when hardware is present and something about it is wrong.
+  exit 0
 fi
 
 # install.sh writes PHOTOG_MODELS_PATH, so mentioning it again is noise in the
@@ -357,7 +419,7 @@ if [[ ! -f .env ]] || ! grep -qE '^PHOTOG_MODELS_PATH=' .env; then
 fi
 
 block="$(cat <<ENVEOF
-# --- Hailo, detected by scripts/hailo-detect.sh on $(date -u '+%Y-%m-%d %H:%M UTC') ---
+# --- Hailo, detected by scripts/env-detect.sh on $(date -u '+%Y-%m-%d %H:%M UTC') ---
 HAILO_DEVICE=${HAILO_DEVICE}
 HAILO_GID=${HAILO_GID}
 HAILO_PYTHON_PACKAGE=${HAILO_PYTHON_PACKAGE}
@@ -433,16 +495,14 @@ if [[ "$DEVICE_ARCH_HINT" == "hailo8" ]]; then
   echo "  descriptions. qwen2 needs a Hailo-10H and HailoRT ${CAPTION_MIN_VERSION}, and there"
   echo "  is no HEF, runtime version or setting that changes that."
   echo
-  echo "  So COMPOSE_FILE above includes docker-compose.python.yml, which adds"
-  echo "  Moondream — a 0.5B model running on the CPU, independent of the card,"
-  echo "  which keeps doing detection and classification at full speed. Enable"
-  echo "  'moondream' at /classifier, not qwen2."
+  echo "  For descriptions, enable 'moondream' at /classifier — not qwen2. It is"
+  echo "  a 0.5B model on the CPU, independent of the card, which keeps doing"
+  echo "  detection and classification at full speed. No compose change is"
+  echo "  needed; the first enable builds its Python environment."
   echo
-  echo "  Descriptions are slow that way: the better part of a minute per photo"
-  echo "  on a Pi. If you do not want them, drop the last overlay and use the"
-  echo "  smaller image — about 95 MB less to pull:"
-  echo
-  echo "    COMPOSE_FILE=docker-compose.yml:docker-compose.hailo.yml"
+  echo "  Slow that way: the better part of a minute per photo on a Pi. Leave"
+  echo "  the classifier off if you do not want them — nothing is downloaded"
+  echo "  and nothing runs until you tick it."
   echo "  ---------------------------------------------------------------"
 fi
 
@@ -487,6 +547,27 @@ if [[ "$DEVICE_ARCH_HINT" == "hailo10" && -n "${HAILORT_VERSION:-}" ]] \
 elif [[ "$DEVICE_ARCH_HINT" == "hailo10" && -n "${HAILORT_VERSION:-}" ]]; then
   ok "HailoRT ${HAILORT_VERSION} — new enough for qwen2 captioning (needs ${CAPTION_MIN_VERSION}+)"
 fi
+
+# ADVISE, for capabilities with no host fact behind them. Printed on every run
+# that got this far, because a machine with a working card is exactly the machine
+# whose operator has not thought about place tags yet.
+echo
+echo "  ---------------------------------------------------------------"
+echo "  Two more optional features, neither needing hardware:"
+echo
+echo "  DESCRIPTIONS — enable a captioner at /classifier. On a Hailo-10H"
+echo "  that is qwen2, accelerated. Otherwise moondream, on the CPU: the"
+echo "  first enable builds its Python environment, a few minutes and an"
+echo "  internet connection, once."
+echo
+echo "  PLACE TAGS — turn GPS coordinates into country/state/place tags."
+echo "  Either a local copy of the GeoNames data, no account and nothing"
+echo "  leaving the machine (a 15 MB download and ~185k rows):"
+echo
+echo "      PHOTOG_LOAD_GAZETTEER=true"
+echo
+echo "  or a free geonames.org account. See docs/geonames.md."
+echo "  ---------------------------------------------------------------"
 
 if [[ "$APPEND" != "1" ]]; then
   echo

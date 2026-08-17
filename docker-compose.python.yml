@@ -1,23 +1,46 @@
-# Moondream captioning — CPU, no accelerator required.
+# Moondream captioning with the Python environment BAKED INTO THE IMAGE.
 #
-#   no accelerator:  docker compose -f docker-compose.yml -f docker-compose.python.yml up -d
-#   Hailo-8:         docker compose -f docker-compose.yml -f docker-compose.hailo.yml -f docker-compose.python.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.python.yml up -d
 #
-# WHY THIS EXISTS
+# ─────────────────────────────────────────────────────────────────────────────
+# YOU ALMOST CERTAINLY DO NOT NEED THIS FILE.
 #
-# qwen2 captioning needs a Hailo-10H and HailoRT 5.3.0. On a Hailo-8, or on a
-# machine with no accelerator at all, it cannot work — so Moondream is the only
-# captioning path those machines have.
+# Moondream works on the default image. Tick the classifier in the UI and the
+# first enable builds its Python environment — a few minutes once, then it is
+# on disk and later starts are quick. There is no separate image to pull and no
+# overlay to add.
 #
-# Moondream runs on the CPU through a Python environment (Snex), which is ~350MB
-# and is therefore NOT in the default image. This overlay switches to the
-# `-python` variant, which is the same application with that environment kept.
+# THE TAG THIS FILE SELECTS IS NOT PUBLISHED. Up to 0.1.4 the `-python` variant
+# was built and pushed alongside every release. It is not any more: the default
+# image carries the venv's pyproject.toml and uv.lock plus `uv`, and
+# PhoTog.Classifications.PythonEnv builds the environment on demand from the
+# lock file. `docker compose pull` with this overlay will fail to find the image.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# WHAT IT IS STILL FOR
+#
+# One case, and it is a real one: **an install that cannot reach the internet
+# when somebody enables the classifier.** The runtime build fetches CPython from
+# python-build-standalone and wheels from PyPI. Air-gapped, heavily firewalled
+# or metered installs need the environment to arrive with the image.
+#
+# It also sidesteps a smaller risk the runtime path carries. uv.lock pins
+# versions, but it cannot promise those artifacts are still fetchable in a
+# year — a yanked wheel or a PyPI outage turns "enable Moondream" into a load
+# error on a machine that a baked image would have run.
+#
+# To use it, build and push the variant yourself from the application repo:
+#
+#   PYTHON_VARIANT=1 ./deploy/docker/build-and-push.sh 0.1.5
+#
+# then set REGISTRY if you are pushing somewhere other than the public repo, and
+# add this overlay to COMPOSE_FILE.
 #
 # DELIBERATELY NOT A SEPARATE "hailo8" COMPOSE FILE
 #
 # A Hailo-8 needs nothing structurally different from a Hailo-10H:
 # docker-compose.hailo.yml already takes the device node, the group id, the
-# host's bindings and the model directory as variables, and hailo-detect.sh
+# host's bindings and the model directory as variables, and env-detect.sh
 # fills them in for whichever generation is installed. A duplicated hailo8 file
 # would differ by a tag and then drift — which is exactly how deploy/web_app.env
 # and install.sh once ended up disagreeing about PHX_HOST. Layer this on top of
@@ -25,31 +48,23 @@
 
 services:
   photog:
-    # Same version, `-python` variant: the two images are built and published
-    # together, so the tag is PHOTOG_TAG with a suffix rather than a second
-    # variable to keep in step. Compose interpolates first and concatenates
-    # after, so the `-python` here lands outside the substitution.
+    # Same version, `-python` suffix. Compose interpolates first and
+    # concatenates after, so the suffix lands outside the substitution and there
+    # is no second variable to keep in step with PHOTOG_TAG.
+    #
+    # Nothing publishes this tag — see the header.
     image: tehsnappysoftware/photog:${PHOTOG_TAG:-0.1.4}-python
 
-    environment:
-      # Moondream fetches its weights at runtime with `hf_hub_download`
-      # (andito/moondream05, moondream-0_5b-int8.mf). Hugging Face's default
-      # cache is under $HOME, which in this image is /home/photog — a path on
-      # the container's writable layer and NOT on any volume. Left alone, the
-      # model is re-downloaded every time the container is recreated, which
-      # looks like a slow first caption after every single `up -d`.
-      #
-      # /app_cache is already a named volume, so point it there.
-      HF_HOME: /app_cache/huggingface
-
-      # First caption after a fresh start includes the download and the model
-      # load. Give it time before deciding it has hung — the log says
-      # "MoondreamServer: starting Python environment and loading model" and
-      # then "model ready".
+    # HF_HOME used to be set here. It is in the image now, so that the default
+    # image gets it too: Moondream fetches its weights with `hf_hub_download`
+    # and Hugging Face's default cache is under $HOME, which is on the
+    # container's writable layer rather than a volume — left alone, the model
+    # re-downloads every time the container is recreated, which reads as a slow
+    # first caption after every single `up -d`.
 
     # A note rather than a setting: the Snex environment pins its own CPython
-    # (requires-python == 3.11.*) and uv fetches it at build time, so it is
-    # independent of the container's system python 3.13.
+    # (requires-python == 3.11.*), independent of the container's system
+    # python 3.13.
     #
     # One interaction to be aware of if you are ALSO using the hailo overlay:
     # that file sets a container-wide PYTHONPATH pointing at the host's

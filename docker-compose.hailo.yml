@@ -18,7 +18,7 @@
 # cannot drift apart — the failure mode this whole stack is famous for. What it
 # trades for that is a Python ABI requirement: the bindings are compiled for one
 # CPython minor version, and they have to match the interpreter INSIDE the
-# container. Run scripts/hailo-detect.sh; it checks this and prints the exact
+# container. Run scripts/env-detect.sh; it checks this and prints the exact
 # .env lines to paste.
 #
 # Nothing is enabled by default. Turn a classifier on at /classifier once its
@@ -39,7 +39,7 @@ services:
       #   hailo1x      HailoRT 5.3.0  Hailo's own debs              /dev/h1x-0
       #
       # Confirmed on a Pi 5 + Hailo-10H: upgrading 5.1.1 -> 5.3.0 moves the node
-      # and the old path stops existing. scripts/hailo-detect.sh finds whichever
+      # and the old path stops existing. scripts/env-detect.sh finds whichever
       # one is there and writes HAILO_DEVICE; the default covers 4.x and 5.1.1.
       #
       # The kernel driver behind the node lives on the host and is not something
@@ -56,7 +56,7 @@ services:
     #
     #   stat -c '%G %g' "$HAILO_DEVICE"
     group_add:
-      - "${HAILO_GID:?run scripts/hailo-detect.sh — it prints HAILO_GID for this host}"
+      - "${HAILO_GID:?run scripts/env-detect.sh — it prints HAILO_GID for this host}"
 
     environment:
       # Where the mounts below land.
@@ -107,12 +107,12 @@ services:
       # putting the host's whole dist-packages on the path — which would shadow
       # the container's numpy and opencv with the host's and give you an ABI
       # mismatch in place of a version mismatch.
-      - ${HAILO_PYTHON_PACKAGE:?run scripts/hailo-detect.sh — it prints HAILO_PYTHON_PACKAGE}:/opt/hailo/python/hailo_platform:ro
+      - ${HAILO_PYTHON_PACKAGE:?run scripts/env-detect.sh — it prints HAILO_PYTHON_PACKAGE}:/opt/hailo/python/hailo_platform:ro
 
       # libhailort itself. Mounted under its exact soname because that is the
       # name the bindings' compiled extension asks the loader for; a plain
       # `libhailort.so` will not satisfy a NEEDED of `libhailort.so.4.20.0`.
-      - ${HAILORT_LIB:?run scripts/hailo-detect.sh — it prints HAILORT_LIB}:/opt/hailo/lib/${HAILORT_SONAME:?run scripts/hailo-detect.sh — it prints HAILORT_SONAME}:ro
+      - ${HAILORT_LIB:?run scripts/env-detect.sh — it prints HAILORT_LIB}:/opt/hailo/lib/${HAILORT_SONAME:?run scripts/env-detect.sh — it prints HAILORT_SONAME}:ro
 
       # Compiled models. Deliberately not in the image: they are large, and
       # Hailo's Dataflow Compiler and model-zoo terms are a licensing question
