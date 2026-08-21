@@ -195,10 +195,28 @@ fi
 # which reads as an application bug, and unpicking it takes an evening. There
 # is no reason to run this script on one: captioning is Hailo-10H only.
 IDENT="$(sudo hailortcli fw-control identify 2>/dev/null || true)"
-DEVICE_ARCH="$(printf '%s' "$IDENT" | grep -iE 'Device Architecture' | head -1 | awk -F: '{gsub(/ /,"",$2); print $2}')"
+
+# The `|| true` is load-bearing. Under `set -euo pipefail`, grep finding
+# nothing makes the whole pipeline status 1, and because that status lands on
+# an assignment rather than a tested condition the shell exits silently — no
+# message, no die(), nothing after "Pre-flight". The empty-DEVICE_ARCH branch
+# below was written to handle exactly this case and was unreachable without it.
+DEVICE_ARCH="$(printf '%s' "$IDENT" | grep -iE 'Device Architecture' | head -1 | awk -F: '{gsub(/ /,"",$2); print $2}' || true)"
+ARCH_SOURCE="fw-control identify"
+
+# A card that fails to probe has no /dev/hailo0, so `identify` returns nothing
+# — and a device that cannot boot its firmware is precisely the box this
+# script exists to repair. Fall back to the PCI ID, which is readable whether
+# or not the SoC ever came up, so the Hailo-8 guard below still has something
+# to check. 1e60:45c4 is the Hailo-10H; a Hailo-8 answers on a different
+# device ID and so still falls through to the confirm prompt.
+if [[ -z "$DEVICE_ARCH" ]] && lspci -d 1e60:45c4 -n 2>/dev/null | grep -q .; then
+  DEVICE_ARCH="HAILO10H"
+  ARCH_SOURCE="lspci — device present but did not enumerate a node"
+fi
 
 if [[ -n "$DEVICE_ARCH" ]]; then
-  info "device            ${DEVICE_ARCH}"
+  info "device            ${DEVICE_ARCH} (${ARCH_SOURCE})"
   case "$DEVICE_ARCH" in
     *HAILO10H*|*HAILO15H*) ;;
     *)
@@ -506,7 +524,7 @@ if [[ $DRY_RUN -eq 0 ]]; then
   # just patched instead of from whatever the first attempt left behind — which
   # is the difference between this working on the second run and failing
   # identically forever.
-  DKMS_ENTRY="$(dkms status 2>/dev/null | grep -i hailo | head -1 | sed 's/[,:].*//' | tr -d ' ')"
+  DKMS_ENTRY="$(dkms status 2>/dev/null | grep -i hailo | head -1 | sed 's/[,:].*//' | tr -d ' ' || true)"
   if [[ -n "$DKMS_ENTRY" ]]; then
     info "clearing stale dkms registration ${DKMS_ENTRY}"
     sudo dkms remove "${DKMS_ENTRY}" --all >/dev/null 2>&1 || true
@@ -523,7 +541,7 @@ if [[ $DRY_RUN -eq 0 ]]; then
   #
   # DKMS is the honest source. `added` means the source is registered and was
   # never built; only `installed` means there is a .ko on disk for this kernel.
-  DKMS_STATE="$(dkms status 2>/dev/null | grep -i hailo | head -1)"
+  DKMS_STATE="$(dkms status 2>/dev/null | grep -i hailo | head -1 || true)"
   info "dkms: ${DKMS_STATE:-nothing registered}"
 
   if [[ "$DKMS_STATE" == *installed* ]]; then
