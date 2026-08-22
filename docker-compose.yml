@@ -19,35 +19,6 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env — see .env.example}
       POSTGRES_DB: ${POSTGRES_DB:-pho_tog_prod}
     volumes:
-      # /var/lib/postgresql, NOT /var/lib/postgresql/data. Postgres 18 moved
-      # PGDATA to /var/lib/postgresql/18/docker and declares its VOLUME on the
-      # parent. Mount the old path and Docker quietly creates an anonymous
-      # volume for the real data directory: the named volume stays empty and the
-      # database is gone the next time the container is recreated.
-      #
-      # Defaults to the named volume. Set PHOTOG_DB_PATH to a directory and the
-      # database lives on your own filesystem instead, where `down -v` cannot
-      # reach it — Compose treats a value containing a slash as a bind mount.
-      #
-      # This is as safe as the named volume ON A LOCAL POSIX FILESYSTEM
-      # (ext4/xfs/btrfs), because a named volume is itself just a directory
-      # under /var/lib/docker on one. It is NOT safe on NFS, SMB/CIFS, exFAT,
-      # FAT32 or NTFS-via-FUSE: Postgres needs real POSIX ownership and honest
-      # fsync, and network filesystems in particular risk corruption rather than
-      # a clean failure. install.sh checks the filesystem type and declines to
-      # set this if it looks unsuitable.
-      #
-      # Ownership is NOT yours to set here, unlike every other path in this
-      # file. The postgres image starts as root, chowns PGDATA to its own uid
-      # (999) and re-execs — so create the directory and leave it alone. A
-      # `chown 1000` here would be actively wrong.
-      #
-      # PGDATA is the `18/docker` subdirectory of whatever you mount, which
-      # conveniently means a mount point's own lost+found does not upset initdb.
-      #
-      # Not a substitute for `pg_dump`: a raw data directory is readable only by
-      # the major version that wrote it, so this survives `down -v` but not a
-      # Postgres 19 upgrade. See docs/upgrading.md.
       - ${PHOTOG_DB_PATH:-photog-db}:/var/lib/postgresql
     # The 64MB default gets tight once the gallery starts running the sorts and
     # hash joins behind tag and album queries.
@@ -71,35 +42,15 @@ services:
     restart: unless-stopped
     depends_on:
       db:
-        # The entrypoint runs migrations before it starts the endpoint, so
-        # without this gate the first boot races Postgres and the container
-        # crash-loops until the database happens to be up.
         condition: service_healthy
     ports:
-      # Loopback only. The `proxy` service below is the way in, and publishing
-      # 4000 on the LAN as well gives the same app two origins — which is how
-      # thumbnails end up 404ing for whoever used the "wrong" one, since image
-      # URLs are absolute and built from PHOTOG_IMAGE_URL_BASE. Bound to
-      # 127.0.0.1 so `curl localhost:4000` on the host still works for
-      # debugging. Set PHOTOG_DIRECT_BIND=0.0.0.0:4000 to expose it properly.
       - "${PHOTOG_DIRECT_BIND:-127.0.0.1:4000}:4000"
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-photog}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-pho_tog_prod}
       SECRET_KEY_BASE: ${SECRET_KEY_BASE:?generate one with `openssl rand -base64 48`}
       PHX_HOST: ${PHX_HOST:?set PHX_HOST to the name you reach this server at}
 
-      # Absolute base for every <img> the UI emits. With the proxy on port 80
-      # this is just http://$PHX_HOST, which is also the app's own default.
-      # Publish the proxy on any other port and you must set this by hand,
-      # including the port — otherwise pages load while every thumbnail 404s
-      # with URLs that look perfectly correct in devtools.
       PHOTOG_IMAGE_URL_BASE: ${PHOTOG_IMAGE_URL_BASE:-http://${PHX_HOST}}
-
-      # Websocket origins, comma-separated. Left blank the app derives a
-      # sensible list from PHX_HOST, which is correct for the default port-80
-      # setup. Set it when you reach the server by IP, through a TLS
-      # terminator, or on a non-80 port — the symptom of getting it wrong is a
-      # page that renders and then never becomes interactive.
       PHOTOG_CHECK_ORIGIN: ${PHOTOG_CHECK_ORIGIN:-}
 
       # Created on first boot, and only while the users table is empty.
@@ -192,14 +143,6 @@ services:
     logging: *logging
 
   proxy:
-    # nginx is here to answer on port 80, so that `http://photog.local` — no
-    # port — is a valid address. That one fact is what makes the app's default
-    # image URLs, the iOS/tvOS clients' PHOTOG_WEB_HOST and the websocket origin
-    # check all line up without threading a port through three places.
-    #
-    # `1-alpine` rather than a hard pin: nginx has been major version 1 for over
-    # a decade, and a floating minor on a reverse proxy is where you want
-    # security fixes to arrive without being asked.
     image: nginx:1-alpine
     restart: unless-stopped
     depends_on:
@@ -207,12 +150,6 @@ services:
     ports:
       - "${PHOTOG_HTTP_PORT:-80}:80"
     volumes:
-      # Replaces the image's stock default.conf. Read-only so a compromised
-      # container cannot rewrite its own routing.
-      #
-      # This file must EXIST before the first `up`. Docker creates a *directory*
-      # at a missing bind-mount source, and nginx then fails on a config path
-      # that is not a file.
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     logging: *logging
 
